@@ -1,0 +1,25 @@
+{
+  "name": "health-intelligence-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for health intelligence — news ingestion, symptom checking, specialist finding, and medical document generation",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "node --env-file=.env --import=tsx/esm --watch src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "express": "^4.21.2",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.13.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}
