@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "health-intelligence": {
+      "type": "http",
+      "url": "https://health-intelligence-mcp.onrender.com/mcp"
+    }
+  }
+}
