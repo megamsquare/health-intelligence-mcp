@@ -724,7 +724,7 @@ Expected response:
 
 Answer each step in order. The `step` number and required answer format change at each step.
 
-**Step 0 — primary symptom**
+##### Step 0 — primary symptom
 
 | Field | Value |
 | --- | --- |
@@ -732,7 +732,7 @@ Answer each step in order. The `step` number and required answer format change a
 | `step` | `0` |
 | `answer` | `"Fever"` |
 
-**Step 1 — duration**
+##### Step 1 — duration
 
 | Field | Value |
 | --- | --- |
@@ -740,7 +740,7 @@ Answer each step in order. The `step` number and required answer format change a
 | `step` | `1` |
 | `answer` | `"1-3 days"` |
 
-**Step 2 — severity**
+##### Step 2 — severity
 
 | Field | Value |
 | --- | --- |
@@ -748,7 +748,7 @@ Answer each step in order. The `step` number and required answer format change a
 | `step` | `2` |
 | `answer` | `7` |
 
-**Step 3 — associated symptoms** (object with boolean values)
+##### Step 3 — associated symptoms (object with boolean values)
 
 | Field | Value |
 | --- | --- |
