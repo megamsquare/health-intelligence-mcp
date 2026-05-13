@@ -9,16 +9,17 @@ import { startSymptomCheck, answerSymptomQuestion } from './tools/symptom-checke
 import { findNearbySpecialists } from './services/google-maps.js';
 import { generateReport } from './tools/generate-report.js';
 
-const server = new McpServer(
-  { name: 'health-intelligence', version: '0.1.0' },
-  {
-    instructions:
-      'Use ingest_health_news to populate the article database, then search_health_content to find articles. ' +
-      'For symptom checking: call start_symptom_check, then call answer_symptom_question for each step until done:true is returned. ' +
-      'generate_medical_report requires a completed symptom session (done:true). ' +
-      'Always remind users that health information here is not a substitute for professional medical advice.',
-  }
-);
+function createServer(): McpServer {
+  const server = new McpServer(
+    { name: 'health-intelligence', version: '0.1.0' },
+    {
+      instructions:
+        'Use ingest_health_news to populate the article database, then search_health_content to find articles. ' +
+        'For symptom checking: call start_symptom_check, then call answer_symptom_question for each step until done:true is returned. ' +
+        'generate_medical_report requires a completed symptom session (done:true). ' +
+        'Always remind users that health information here is not a substitute for professional medical advice.',
+    }
+  );
 
 // ── ingest_health_news ────────────────────────────────────────────────────────
 
@@ -272,6 +273,9 @@ server.registerTool(
   }
 );
 
+  return server;
+}
+
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
 const app = express();
@@ -292,6 +296,7 @@ app.post('/mcp', async (req, res) => {
     return;
   }
 
+  const server = createServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => transport.close());
   await server.connect(transport);
