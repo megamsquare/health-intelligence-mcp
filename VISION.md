@@ -30,7 +30,7 @@ Because it is built on the Model Context Protocol — an open standard, not a Cl
 ### Target Users
 
 | User | Use case |
-|---|---|
+| --- | --- |
 | **Patients in underserved regions** | First-point-of-contact health guidance and nearest facility finder |
 | **Patients preparing for a GP visit** | Structured symptom history and printed report to bring to the appointment |
 | **Caregivers** | Navigating symptoms for a family member and finding appropriate specialists |
@@ -125,7 +125,7 @@ The server exposes six tools to Claude. Each request creates an isolated `McpSer
 
 Fetches verified health news and drug-recall alerts from WHO, CDC, NHS, and OpenFDA and stores them in PostgreSQL. Uses `ON CONFLICT DO NOTHING` on `(source, external_id)` to deduplicate across runs. Returns counts of new articles ingested and duplicates skipped.
 
-```
+```text
 Input:  sources  string[]  — ["WHO", "CDC", "NHS", "OpenFDA"] (default: all four)
 Output: { ingested: number, skipped_duplicates: number, errors?: string[] }
 ```
@@ -137,7 +137,7 @@ Output: { ingested: number, skipped_duplicates: number, errors?: string[] }
 
 Full-text search across stored WHO/CDC/NHS/OpenFDA articles using PostgreSQL's `plainto_tsquery` with `ts_rank` relevance scoring, with optional live PubMed research search. Results from both sources are returned together, ranked by relevance and recency.
 
-```
+```text
 Input:  query          string   — search keywords or medical terms
         limit          integer  — max results (1–20, default 10)
         include_pubmed boolean  — also run live PubMed search (default true)
@@ -151,7 +151,7 @@ Output: { stored_articles: Article[], pubmed_articles: Article[], total: number 
 
 Creates a new symptom checker session in PostgreSQL and returns the session ID and first clinical question. Sessions persist across Claude restarts — the patient can resume by providing their session ID.
 
-```
+```text
 Input:  (none)
 Output: { session_id: UUID, step: 0, total_steps: 6, question: string }
 ```
@@ -163,10 +163,10 @@ Output: { session_id: UUID, step: 0, total_steps: 6, question: string }
 
 Submits an answer for the current step and advances the session. On the final step, runs the assessment engine and returns a structured diagnosis with urgency level, likely conditions, and recommended action. Steps must be answered in order; the session rejects out-of-sequence submissions.
 
-**The six steps:**
+The six steps:
 
 | Step | Collects | Answer type |
-|---|---|---|
+| --- | --- | --- |
 | 0 | Primary symptom | Enum (13 options) |
 | 1 | Duration | Enum (5 options) |
 | 2 | Severity (1–10) | Integer |
@@ -174,7 +174,7 @@ Submits an answer for the current step and advances the session. On the final st
 | 4 | Medical history | Object `{key: boolean}` |
 | 5 | Emergency flags | Object `{key: boolean}` |
 
-```
+```text
 Input:  session_id  UUID
         step        integer
         answer      string | number | {[key: string]: boolean}
@@ -197,7 +197,7 @@ Assessment: {
 
 Geocodes a location using the Google Maps Geocoding API, then searches nearby hospitals and clinics with the Places API. Results are sorted by Haversine distance and include name, address, rating, and a direct Google Maps link.
 
-```
+```text
 Input:  location    string  — city, address, or postal code
         specialty   string  — e.g. "cardiologist", "urgent care"
         radius_km   number  — search radius in km (1–50, default 10)
@@ -211,7 +211,7 @@ Output: SpecialistResult[] — up to 10 results
 
 Loads a completed symptom session from PostgreSQL and generates an A4 PDF using `pdf-lib`. The report includes the urgency banner, associated symptoms, medical history, possible conditions, recommended action, and a prominent medical disclaimer. Returns the PDF as a base64-encoded blob suitable for download or printing.
 
-```
+```text
 Input:  session_id  UUID  — must be a completed session (done: true)
 Output: text message + embedded resource { mimeType: "application/pdf", blob: base64 }
 ```
@@ -296,7 +296,7 @@ Delivers the experience to users who don't have access to Claude desktop or Clau
 ## Stack Summary
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Protocol | Model Context Protocol (Streamable HTTP transport) |
 | Runtime | Node.js 20, TypeScript |
 | Framework | `@modelcontextprotocol/sdk`, Express |
