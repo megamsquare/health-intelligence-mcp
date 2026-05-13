@@ -18,6 +18,7 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 - [MCP Tools](#mcp-tools)
 - [Connecting to Claude](#connecting-to-claude)
 - [Connecting to Other Platforms](#connecting-to-other-platforms)
+- [Testing with MCP Inspector](#testing-with-mcp-inspector)
 - [Deploying to Render](#deploying-to-render)
 - [Running Tests](#running-tests)
 - [API Sources](#api-sources)
@@ -600,9 +601,253 @@ Add to `~/.continue/config.json`:
 
 ### MCP Inspector (testing)
 
+See [Testing with MCP Inspector](#testing-with-mcp-inspector) for a full walkthrough.
+
+---
+
+## Testing with MCP Inspector
+
+MCP Inspector is an official browser-based tool for exploring and testing any MCP server interactively. It lets you browse the tool list, call individual tools with custom inputs, and inspect the raw JSON responses — without writing any code.
+
+### Launch
+
 ```bash
 npx @modelcontextprotocol/inspector
-# → select "Streamable HTTP" → paste the URL → Connect
+```
+
+This starts two local services:
+
+- **Proxy server** on `http://localhost:5173` — forwards MCP calls to the target server
+- **UI** on `http://localhost:6274` — the browser interface
+
+Open `http://localhost:6274` in your browser. The Inspector will prompt you to connect to an MCP server.
+
+### Connect to the live server
+
+1. In the **Transport Type** dropdown, select **Streamable HTTP**
+2. In the **URL** field, enter:
+
+   ```text
+   https://health-intelligence-mcp.onrender.com/mcp
+   ```
+
+3. Click **Connect**
+
+The left panel will show **Tools (6)**, **Resources (0)**, and **Prompts (0)** once the handshake completes.
+
+> If the server is cold-starting on Render's free tier, the connection may take 30–60 seconds on the first attempt. Wait for "Connected" before proceeding.
+
+### Connect to a local server
+
+Start the local server first, then connect Inspector to it:
+
+```bash
+# Terminal 1 — start the server
+npm run dev
+
+# Terminal 2 — launch Inspector
+npx @modelcontextprotocol/inspector
+```
+
+In the UI, use URL `http://localhost:3000/mcp` with transport **Streamable HTTP**.
+
+---
+
+### Using the tools
+
+Click the **Tools** tab in the left panel to see all six tools. Click any tool name to expand its input form. Fill in the fields and click **Run Tool** to execute.
+
+#### `ingest_health_news`
+
+Fetches and stores articles from health authority feeds. Safe to call repeatedly — duplicates are skipped.
+
+| Field | Value to enter |
+| --- | --- |
+| `sources` | `["WHO", "CDC", "NHS", "OpenFDA"]` |
+
+Expected response:
+
+```json
+{ "ingested": 23, "skipped_duplicates": 17 }
+```
+
+Run this first — it populates the database so `search_health_content` returns results.
+
+---
+
+#### `search_health_content`
+
+Searches stored articles by keyword. Optionally queries PubMed live.
+
+| Field | Value to enter |
+| --- | --- |
+| `query` | `fever` |
+| `limit` | `5` |
+| `include_pubmed` | `true` |
+
+Expected response shape:
+
+```json
+{
+  "stored_articles": [ { "source": "WHO", "title": "...", ... } ],
+  "pubmed_articles": [ { "external_id": "38921034", ... } ],
+  "total": 8
+}
+```
+
+---
+
+#### `start_symptom_check`
+
+Opens a new symptom checker session. No input required.
+
+| Field | Value to enter |
+| --- | --- |
+| *(none)* | Leave empty, click **Run Tool** |
+
+Copy the `session_id` from the response — you'll need it for the next steps.
+
+Expected response:
+
+```json
+{
+  "session_id": "88d53b13-d6d4-4e6f-aa73-270d54a819e5",
+  "step": 0,
+  "total_steps": 6,
+  "question": "Step 1 of 6: What is your primary symptom?..."
+}
+```
+
+---
+
+#### `answer_symptom_question`
+
+Answer each step in order. The `step` number and required answer format change at each step.
+
+**Step 0 — primary symptom**
+
+| Field | Value |
+| --- | --- |
+| `session_id` | *(paste from above)* |
+| `step` | `0` |
+| `answer` | `"Fever"` |
+
+**Step 1 — duration**
+
+| Field | Value |
+| --- | --- |
+| `session_id` | *(same)* |
+| `step` | `1` |
+| `answer` | `"1-3 days"` |
+
+**Step 2 — severity**
+
+| Field | Value |
+| --- | --- |
+| `session_id` | *(same)* |
+| `step` | `2` |
+| `answer` | `7` |
+
+**Step 3 — associated symptoms** (object with boolean values)
+
+| Field | Value |
+| --- | --- |
+| `session_id` | *(same)* |
+| `step` | `3` |
+| `answer` | `{"unusual_fatigue": true, "fever": false, "chills": false, "night_sweats": false, "nausea": false, "vomiting": false, "diarrhea": false, "rash": false, "swollen_lymph_nodes": false, "joint_pain": false}` |
+
+**Step 4 — medical history** (object with boolean values)
+
+| Field | Value |
+| --- | --- |
+| `session_id` | *(same)* |
+| `step` | `4` |
+| `answer` | `{"diabetes": false, "heart_disease": false, "hypertension": false, "asthma": false, "immunocompromised": false, "pregnant": false}` |
+
+**Step 5 — emergency flags** (final step — triggers assessment)
+
+| Field | Value |
+| --- | --- |
+| `session_id` | *(same)* |
+| `step` | `5` |
+| `answer` | `{"crushing_chest_pain": false, "difficulty_breathing": false, "loss_of_consciousness": false, "sudden_severe_headache": false, "facial_drooping": false, "uncontrolled_bleeding": false}` |
+
+After step 5, the response contains `"done": true` and the full assessment:
+
+```json
+{
+  "done": true,
+  "session_id": "88d53b13-...",
+  "assessment": {
+    "urgency": "URGENT",
+    "urgency_message": "Seek care today",
+    "likely_conditions": [ ... ],
+    "recommended_action": "...",
+    "disclaimer": "..."
+  }
+}
+```
+
+---
+
+#### `find_specialists`
+
+Finds nearby medical facilities using Google Maps.
+
+| Field | Value to enter |
+| --- | --- |
+| `location` | `Lagos, Nigeria` |
+| `specialty` | `infectious disease` |
+| `radius_km` | `20` |
+
+Expected response shape:
+
+```json
+[
+  {
+    "name": "Lagos State Infectious Diseases Isolation Center Yaba",
+    "address": "Herbert Macaulay Way, Yaba",
+    "rating": 4.2,
+    "distance_km": 10.4,
+    "maps_url": "https://www.google.com/maps/place/?q=place_id:...",
+    "specialty": "infectious disease"
+  }
+]
+```
+
+---
+
+#### `generate_medical_report`
+
+Generates a PDF report for a completed session. The session must have `done: true` (all 6 steps answered).
+
+| Field | Value to enter |
+| --- | --- |
+| `session_id` | *(paste the session_id used in the symptom checker steps above)* |
+
+The response contains a `resource` block with the PDF as a base64 blob:
+
+```json
+{
+  "content": [
+    { "type": "text", "text": "Medical report generated for session ..." },
+    {
+      "type": "resource",
+      "resource": {
+        "uri": "health-report://....pdf",
+        "mimeType": "application/pdf",
+        "blob": "JVBERi0xLjQ..."
+      }
+    }
+  ]
+}
+```
+
+The blob starts with `JVBERi0` — the base64 encoding of `%PDF-`. To decode and view the PDF, paste the blob into any base64-to-file tool, or use:
+
+```bash
+echo "JVBERi0xLjQ..." | base64 -d > report.pdf
+open report.pdf
 ```
 
 ---
