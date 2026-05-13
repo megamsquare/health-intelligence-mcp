@@ -281,10 +281,23 @@ server.registerTool(
 const app = express();
 app.use(express.json());
 
-// Allowed origins for DNS-rebinding prevention (spec MUST requirement)
+// Origin allowlist — DNS-rebinding prevention (MCP spec MUST requirement).
+//
+// Only browser-based web clients send an Origin header. Desktop apps and CLI
+// tools (Cursor, Windsurf, Cline, Zed, Continue.dev, OpenAI Agents SDK) make
+// direct HTTP calls without an Origin header and are already permitted by the
+// `if (origin &&` guard below — no entry needed here for those clients.
 const ALLOWED_ORIGINS = new Set([
+  // Anthropic
   'https://claude.ai',
   'https://api.anthropic.com',
+
+  // OpenAI (ChatGPT web + platform playground)
+  'https://chatgpt.com',
+  'https://chat.openai.com',
+  'https://platform.openai.com',
+
+  // Local development
   'http://localhost:3000',
   'http://localhost:6274', // MCP Inspector
 ]);
