@@ -1,6 +1,6 @@
 # Health Intelligence MCP — Vision & Architecture
 
-> **Verified health intelligence, guided symptom assessment, and personalised care navigation — delivered as a Model Context Protocol server that works directly inside Claude.**
+> **Verified health intelligence, guided symptom assessment, and personalised care navigation — delivered as a Model Context Protocol server that works inside Claude, GPT-4o, Gemini, and any other MCP-compatible AI platform.**
 
 ---
 
@@ -25,7 +25,7 @@ Health Intelligence MCP is a remote MCP server that gives Claude direct, structu
 - **A specialist finder** that locates nearby hospitals and clinics via Google Maps
 - **A PDF medical report generator** that produces a structured document the patient hands to their doctor
 
-Because it is built on the Model Context Protocol, it integrates natively into Claude's conversation interface. No separate app to install. No login wall. The user simply talks to Claude, and Claude uses the tools.
+Because it is built on the Model Context Protocol — an open standard, not a Claude-exclusive API — it integrates natively into any MCP-compatible AI interface. No separate app to install. No login wall. The user simply talks to their AI assistant of choice, and the assistant uses the tools.
 
 ### Target Users
 
@@ -306,6 +306,29 @@ Delivers the experience to users who don't have access to Claude desktop or Clau
 | Mapping | Google Maps Geocoding API + Places API |
 | Hosting | Render (web service) |
 | CI/CD | GitHub → Render auto-deploy on push to `main` |
+
+---
+
+## Platform Compatibility
+
+MCP is an open protocol. The server uses standard Streamable HTTP transport, so it connects to any MCP-compatible client — not just Claude.
+
+| Platform | Type | How to connect |
+|---|---|---|
+| **Claude Code** | CLI | `claude mcp add --transport http health-intelligence https://health-intelligence-mcp.onrender.com/mcp` |
+| **Claude Desktop / claude.ai** | Desktop / Web | Settings → Connectors → Add custom connector → paste the URL |
+| **OpenAI Agents SDK** | SDK | `MCPServerHTTP(url="https://health-intelligence-mcp.onrender.com/mcp")` |
+| **Cursor** | IDE | Settings → MCP → add server URL |
+| **Windsurf** | IDE | MCP config file → add server URL |
+| **Cline** (VS Code) | Extension | MCP settings → add server URL |
+| **Continue.dev** | Extension | `config.json` → `mcpServers` block |
+| **Zed** | Editor | `assistant.json` → MCP server config |
+| **LibreChat** | Self-hosted | `librechat.yaml` → MCP plugin config |
+| **Any custom client** | Custom | `POST /mcp` with `Accept: application/json, text/event-stream` |
+
+The tool schemas, descriptions, and behaviour are identical regardless of which model drives the calls — MCP fully abstracts the underlying AI from the server implementation.
+
+> **Note for operators:** The server currently allows requests from `https://claude.ai` and `https://api.anthropic.com` by origin. To enable other platforms, add their origin domains to the `ALLOWED_ORIGINS` set in `src/server.ts`, or remove the origin check entirely for a fully public deployment.
 
 ---
 
