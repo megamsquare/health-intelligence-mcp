@@ -75,9 +75,9 @@ API keys required (see [Environment Variables](#environment-variables)):
 
 ## Local Setup — Docker Compose
 
-The fastest path. Docker Compose starts a local PostgreSQL container and the app together. The schema is applied automatically via the `initdb` mount.
+The fastest path. Docker Compose starts a local PostgreSQL container and the app together. The schema is applied automatically on first start via the `initdb` mount — no manual migration needed.
 
-**1. Clone and copy env file**
+### Step 1 — Clone and copy env file
 
 ```bash
 git clone https://github.com/megamsquare/health-intelligence-mcp.git
@@ -85,41 +85,68 @@ cd health-intelligence-mcp
 cp .env.example .env
 ```
 
-**2. Fill in your API keys in `.env`**
+### Step 2 — Fill in API keys in `.env`
 
-```
+```ini
 PUBMED_API_KEY=your_key
 GOOGLE_MAPS_API_KEY=your_key
 OPENFDA_API_KEY=your_key          # optional
 ```
 
-> `DATABASE_URL` is not needed when using Docker Compose — the app container reads it from the `docker-compose.yml` environment block directly.
+`DATABASE_URL` is not needed when using Docker Compose — the app container reads it from the `docker-compose.yml` environment block directly.
 
-**3. Start**
+### Step 3 — Start (development mode with hot reload)
 
 ```bash
 docker compose up --build
 ```
 
-The app will be available at `http://localhost:3000`. The health check endpoint confirms it is running:
+`docker-compose.override.yml` is automatically merged when you run `docker compose up`. It switches the app to the `dev` build stage, mounts source files into the container, and starts `tsx watch` — so the server restarts automatically on every file change. The database volume (`postgres_data`) and `node_modules` stay isolated from the host.
+
+The app is available at `http://localhost:3000`. Confirm it is running:
 
 ```bash
 curl http://localhost:3000/health
 # {"status":"ok","service":"health-intelligence-mcp","version":"0.1.0"}
 ```
 
-**4. Stop**
+### Step 4 — Start in production mode (compiled)
+
+To run the compiled production image without hot reload, skip the override file:
+
+```bash
+docker compose -f docker-compose.yml up --build
+```
+
+This builds the `production` stage (TypeScript compiled to `dist/`) and runs `node dist/server.js`.
+
+### Step 5 — Stop
 
 ```bash
 docker compose down          # keeps the postgres_data volume
 docker compose down -v       # also deletes the database volume
 ```
 
+### Schema migrations
+
+The schema is applied automatically on first start. If you change `schema.sql` and need to re-apply it, destroy the volume and restart:
+
+```bash
+docker compose down -v
+docker compose up --build
+```
+
+For incremental migrations against an existing volume, connect to the running database directly:
+
+```bash
+docker compose exec db psql -U healthintel -d healthintel -f /dev/stdin < src/db/schema.sql
+```
+
 ---
 
 ## Local Setup — Manual
 
-**1. Clone and install**
+### Step 1 — Clone and install
 
 ```bash
 git clone https://github.com/megamsquare/health-intelligence-mcp.git
@@ -127,11 +154,11 @@ cd health-intelligence-mcp
 npm install
 ```
 
-**2. Provision a PostgreSQL database**
+### Step 2 — Provision a PostgreSQL database
 
 Any PostgreSQL 14+ instance works. For a free cloud database use [Neon](https://neon.tech). Copy the connection string.
 
-**3. Apply the schema**
+### Step 3 — Apply the schema
 
 ```bash
 # If psql is installed
@@ -149,20 +176,20 @@ console.log('Schema applied.');
 EOF
 ```
 
-**4. Configure environment**
+### Step 4 — Configure environment
 
 ```bash
 cp .env.example .env
 # Edit .env with your DATABASE_URL and API keys
 ```
 
-**5. Run in development mode** (watch — restarts on file change)
+### Step 5 — Run in development mode (watch)
 
 ```bash
 npm run dev
 ```
 
-**6. Build and run in production mode**
+### Step 6 — Build and run in production mode
 
 ```bash
 npm run build
@@ -225,7 +252,7 @@ CREATE TABLE IF NOT EXISTS symptom_sessions (
 );
 ```
 
-**`health_articles`**
+### `health_articles`
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -239,7 +266,7 @@ CREATE TABLE IF NOT EXISTS symptom_sessions (
 | `ingested_at` | TIMESTAMPTZ | When this server stored the record |
 | `tags` | TEXT[] | MeSH terms (PubMed) or recall classification (OpenFDA) |
 
-**`symptom_sessions`**
+### `symptom_sessions`
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -262,15 +289,15 @@ All tools are registered on a fresh `McpServer` instance per request (stateless 
 
 Fetches articles from one or more health authority feeds and stores them in PostgreSQL. Uses `ON CONFLICT DO NOTHING` on `(source, external_id)` — safe to call repeatedly without creating duplicates.
 
-**Annotations:** `readOnlyHint: false` · `destructiveHint: false` · `openWorldHint: true`
+Annotations: `readOnlyHint: false` · `destructiveHint: false` · `openWorldHint: true`
 
-**Input**
+#### Input
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `sources` | `string[]` | `["WHO","CDC","NHS","OpenFDA"]` | Which sources to fetch. Valid values: `WHO`, `CDC`, `NHS`, `OpenFDA` |
 
-**Example response**
+#### Example response
 
 ```json
 {
@@ -285,9 +312,9 @@ Fetches articles from one or more health authority feeds and stores them in Post
 
 Full-text search across stored articles using PostgreSQL `plainto_tsquery` with `ts_rank` relevance scoring. Optionally runs a live PubMed search in parallel.
 
-**Annotations:** `readOnlyHint: true` · `openWorldHint: true`
+Annotations: `readOnlyHint: true` · `openWorldHint: true`
 
-**Input**
+#### Input
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -295,7 +322,7 @@ Full-text search across stored articles using PostgreSQL `plainto_tsquery` with 
 | `limit` | `integer` | `10` | Max results per source. Range: 1–20 |
 | `include_pubmed` | `boolean` | `true` | Also run a live PubMed search. Adds ~1–2 s latency |
 
-**Example response**
+#### Example response
 
 ```json
 {
@@ -328,11 +355,11 @@ Full-text search across stored articles using PostgreSQL `plainto_tsquery` with 
 
 Creates a new symptom checker session in PostgreSQL and returns the first clinical question. The `session_id` must be passed to every subsequent `answer_symptom_question` call.
 
-**Annotations:** `readOnlyHint: false` · `destructiveHint: false`
+Annotations: `readOnlyHint: false` · `destructiveHint: false`
 
-**Input:** none
+Input: none
 
-**Example response**
+#### Example response
 
 ```json
 {
@@ -349,9 +376,9 @@ Creates a new symptom checker session in PostgreSQL and returns the first clinic
 
 Submits an answer for the current step. Returns the next question, or on the final step returns `done: true` with the full urgency assessment. Steps must be answered in order.
 
-**Annotations:** `readOnlyHint: false` · `destructiveHint: false`
+Annotations: `readOnlyHint: false` · `destructiveHint: false`
 
-**Input**
+#### Input
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -359,7 +386,7 @@ Submits an answer for the current step. Returns the next question, or on the fin
 | `step` | `integer` | Current step number (0-indexed) from the previous response |
 | `answer` | `string \| number \| {[key: string]: boolean}` | String or number for single-value steps; object for yes/no steps (see below) |
 
-**Answer format by step**
+#### Answer format by step
 
 | Step | Question | Answer type | Example |
 | --- | --- | --- | --- |
@@ -370,7 +397,7 @@ Submits an answer for the current step. Returns the next question, or on the fin
 | 4 | Medical history | `{[key: string]: boolean}` | `{"diabetes": false, "heart_disease": false, ...}` |
 | 5 | Emergency flags | `{[key: string]: boolean}` | `{"crushing_chest_pain": false, ...}` |
 
-**Example mid-flow response (steps 0–4)**
+#### Example mid-flow response (steps 0–4)
 
 ```json
 {
@@ -381,7 +408,7 @@ Submits an answer for the current step. Returns the next question, or on the fin
 }
 ```
 
-**Example final response (step 5)**
+#### Example final response (step 5)
 
 ```json
 {
@@ -406,9 +433,9 @@ Submits an answer for the current step. Returns the next question, or on the fin
 
 Geocodes a location with the Google Maps Geocoding API, then searches for nearby medical facilities using the Places API. Results are sorted by Haversine distance.
 
-**Annotations:** `readOnlyHint: true` · `openWorldHint: true`
+Annotations: `readOnlyHint: true` · `openWorldHint: true`
 
-**Input**
+#### Input
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -416,7 +443,7 @@ Geocodes a location with the Google Maps Geocoding API, then searches for nearby
 | `specialty` | `string` | — | Medical specialty or facility type. e.g. `"cardiologist"`, `"urgent care"` |
 | `radius_km` | `number` | `10` | Search radius in kilometres. Range: 1–50 |
 
-**Example response**
+#### Example response
 
 ```json
 [
@@ -437,15 +464,15 @@ Geocodes a location with the Google Maps Geocoding API, then searches for nearby
 
 Loads a completed symptom session from PostgreSQL and generates an A4 PDF using `pdf-lib`. The report includes urgency banner, associated symptoms, medical history, possible conditions, recommended action, and a medical disclaimer. Returns the PDF as a base64-encoded blob.
 
-**Annotations:** `readOnlyHint: true` · `idempotentHint: true`
+Annotations: `readOnlyHint: true` · `idempotentHint: true`
 
-**Input**
+#### Input
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `session_id` | `string (UUID)` | A completed session — `done: true` must have been returned by `answer_symptom_question` |
 
-**Example response**
+#### Example response
 
 ```json
 {
@@ -584,10 +611,9 @@ npx @modelcontextprotocol/inspector
 
 ### From the Render dashboard
 
-1. Go to [render.com](https://render.com) → **New → Web Service**
-2. Connect your GitHub repository
-3. Render detects `render.yaml` automatically and pre-fills build/start commands
-4. Under **Environment**, add the four variables:
+Go to [render.com](https://render.com) → **New → Web Service** and connect your GitHub repository. Render detects `render.yaml` automatically and pre-fills the build and start commands.
+
+Under **Environment**, add these variables:
 
 | Key | Value |
 | --- | --- |
@@ -596,9 +622,7 @@ npx @modelcontextprotocol/inspector
 | `GOOGLE_MAPS_API_KEY` | Your Google Maps API key |
 | `OPENFDA_API_KEY` | Your OpenFDA API key (optional) |
 
-5. Click **Deploy**
-
-`NODE_ENV=production` is set automatically by `render.yaml`.
+Click **Deploy**. `NODE_ENV=production` is set automatically by `render.yaml`.
 
 ### From the Render CLI
 
@@ -636,6 +660,7 @@ node e2e-test.mjs
 ```
 
 The script:
+
 1. Ingests news from all four sources
 2. Searches for `"fever"` with PubMed fallback
 3. Runs a complete 6-step symptom check (fever · 1-3 days · severity 7 · fatigue · no history · no emergency flags)
@@ -768,7 +793,7 @@ Desktop apps and CLI tools (Cursor, Windsurf, Cline, Zed, Continue.dev, OpenAI A
 
 Google Maps could not resolve the location string. Use a more specific address:
 
-```
+```text
 ❌  "Lagos"
 ✅  "Lagos, Nigeria"
 ✅  "Victoria Island, Lagos, Nigeria"
@@ -790,7 +815,7 @@ You have exceeded the NCBI rate limit (3 requests/s without a key). Add a `PUBME
 
 ### Neon SSL warning on startup
 
-```
+```text
 Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca'...
 ```
 

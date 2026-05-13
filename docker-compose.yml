@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     environment:
       POSTGRES_DB: healthintel
       POSTGRES_USER: healthintel
@@ -9,7 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./src/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ./src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U healthintel"]
       interval: 5s
@@ -17,15 +17,17 @@ services:
       retries: 5
 
   app:
-    build: .
+    build:
+      context: .
+      target: production
+    env_file:
+      - .env
+    environment:
+      # Overrides DATABASE_URL from .env with the local db service
+      DATABASE_URL: postgresql://healthintel:healthintel@db:5432/healthintel?sslmode=disable
+      NODE_ENV: production
     ports:
       - "3000:3000"
-    environment:
-      DATABASE_URL: postgresql://healthintel:healthintel@db:5432/healthintel?sslmode=disable
-      PUBMED_API_KEY: ${PUBMED_API_KEY:-}
-      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
-      OPENFDA_API_KEY: ${OPENFDA_API_KEY:-}
-      NODE_ENV: development
     depends_on:
       db:
         condition: service_healthy

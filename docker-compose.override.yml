@@ -1,0 +1,13 @@
+# Merged automatically with docker-compose.yml when running `docker compose up`.
+# Switches the app to the dev build stage so tsx watch provides hot reload.
+# Source files are mounted into the container; node_modules stays isolated.
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
