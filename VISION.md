@@ -314,7 +314,7 @@ Delivers the experience to users who don't have access to Claude desktop or Clau
 MCP is an open protocol. The server uses standard Streamable HTTP transport, so it connects to any MCP-compatible client — not just Claude.
 
 | Platform | Type | How to connect |
-|---|---|---|
+| --- | --- | --- |
 | **Claude Code** | CLI | `claude mcp add --transport http health-intelligence https://health-intelligence-mcp.onrender.com/mcp` |
 | **Claude Desktop / claude.ai** | Desktop / Web | Settings → Connectors → Add custom connector → paste the URL |
 | **OpenAI Agents SDK** | SDK | `MCPServerHTTP(url="https://health-intelligence-mcp.onrender.com/mcp")` |
