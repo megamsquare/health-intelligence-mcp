@@ -25,11 +25,13 @@ export async function fetchCdcNews(): Promise<HealthArticle[]> {
 }
 
 export async function fetchNhsNews(): Promise<HealthArticle[]> {
-  const res = await fetch('https://www.nhs.uk/news/feed/', {
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`NHS feed returned ${res.status}`);
-  return parseRss(await res.text(), 'NHS');
+  // NHS deprecated their RSS feed (410). UKHSA is the direct successor for UK public health news.
+  const res = await fetch(
+    'https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=uk-health-security-agency',
+    { signal: AbortSignal.timeout(10_000) }
+  );
+  if (!res.ok) throw new Error(`UKHSA feed returned ${res.status}`);
+  return parseAtom(await res.text(), 'NHS');
 }
 
 function parseRss(xml: string, source: string): HealthArticle[] {
@@ -57,6 +59,40 @@ function parseRss(xml: string, source: string): HealthArticle[] {
   }
 
   return items.slice(0, 20);
+}
+
+function parseAtom(xml: string, source: string): HealthArticle[] {
+  const items: HealthArticle[] = [];
+
+  for (const match of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const entry = match[1];
+    const title = extractTag(entry, 'title');
+    const id = extractTag(entry, 'id');
+    const updated = extractTag(entry, 'updated');
+    const summary = extractTag(entry, 'summary');
+
+    const linkMatch = entry.match(/<link[^>]+rel="alternate"[^>]+href="([^"]+)"/);
+    const url = linkMatch?.[1] ?? null;
+
+    if (!title || !id) continue;
+
+    items.push({
+      source,
+      external_id: id.trim(),
+      title: stripHtml(title),
+      summary: summary ? stripHtml(summary).slice(0, 500) : null,
+      url,
+      published_at: updated ? new Date(updated) : null,
+      tags: [],
+    });
+  }
+
+  return items.slice(0, 20);
+}
+
+function extractTag(xml: string, tag: string): string | null {
+  const m = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+  return m ? m[1]?.trim() ?? null : null;
 }
 
 function extractCdata(xml: string, tag: string): string | null {
