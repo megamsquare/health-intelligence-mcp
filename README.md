@@ -16,6 +16,7 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
 - [MCP Tools](#mcp-tools)
+- [MCP Resources](#mcp-resources)
 - [Connecting to Claude](#connecting-to-claude)
 - [Connecting to Other Platforms](#connecting-to-other-platforms)
 - [Testing with MCP Inspector](#testing-with-mcp-inspector)
@@ -35,6 +36,7 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 - **Urgency assessment** — rule-based engine returning `EMERGENCY / URGENT / SOON / ROUTINE` with likely conditions and recommended action
 - **Specialist finder** — Google Maps Geocoding + Places API, returns nearby hospitals and clinics sorted by Haversine distance
 - **PDF report generation** — A4 PDF via `pdf-lib` returned as a base64 blob, ready to hand to a doctor
+- **MCP resources** — four readable URIs exposing recent articles, condition intelligence, and session history for context-window injection
 - **Multi-platform** — works with Claude, ChatGPT, Cursor, Windsurf, Cline, Zed, Continue.dev, and any other MCP-compatible client
 
 ---
@@ -221,26 +223,32 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Stores ingested articles from WHO, CDC, NHS, OpenFDA, and PubMed
 CREATE TABLE IF NOT EXISTS health_articles (
-  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  source       TEXT        NOT NULL CHECK (source IN ('WHO','CDC','NHS','OpenFDA','PubMed')),
-  external_id  TEXT        NOT NULL,
-  title        TEXT        NOT NULL,
-  summary      TEXT,
-  url          TEXT,
-  published_at TIMESTAMPTZ,
-  ingested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  tags         TEXT[]      NOT NULL DEFAULT '{}',
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  source        TEXT        NOT NULL CHECK (source IN ('WHO','CDC','NHS','OpenFDA','PubMed')),
+  external_id   TEXT        NOT NULL,
+  title         TEXT        NOT NULL,
+  summary       TEXT,
+  url           TEXT,
+  published_at  TIMESTAMPTZ,
+  ingested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  tags          TEXT[]      NOT NULL DEFAULT '{}',
+  -- Pre-computed at insert time; reused by FTS queries and ts_rank without recomputing
+  search_vector TSVECTOR    GENERATED ALWAYS AS
+                  (to_tsvector('english', title || ' ' || COALESCE(summary, ''))) STORED,
   UNIQUE (source, external_id)
 );
 
--- Full-text search index over title + summary
+-- GIN index on the stored tsvector column (faster than a functional index)
 CREATE INDEX IF NOT EXISTS health_articles_fts
-  ON health_articles
-  USING GIN (to_tsvector('english', title || ' ' || COALESCE(summary, '')));
+  ON health_articles USING GIN (search_vector);
 
 -- Source + date index for efficient feed queries
 CREATE INDEX IF NOT EXISTS health_articles_source_date
   ON health_articles (source, published_at DESC);
+
+-- GIN index on tags for array containment queries
+CREATE INDEX IF NOT EXISTS health_articles_tags
+  ON health_articles USING GIN (tags);
 
 -- Persists symptom checker sessions across requests
 CREATE TABLE IF NOT EXISTS symptom_sessions (
@@ -251,6 +259,11 @@ CREATE TABLE IF NOT EXISTS symptom_sessions (
   answers      JSONB       NOT NULL DEFAULT '{}',
   assessment   JSONB
 );
+
+-- Partial index covering only active (incomplete) sessions — the only ones queried mid-flow
+CREATE INDEX IF NOT EXISTS symptom_sessions_active
+  ON symptom_sessions (id)
+  WHERE completed_at IS NULL;
 ```
 
 ### `health_articles`
@@ -266,6 +279,7 @@ CREATE TABLE IF NOT EXISTS symptom_sessions (
 | `published_at` | TIMESTAMPTZ | Publication date from the feed |
 | `ingested_at` | TIMESTAMPTZ | When this server stored the record |
 | `tags` | TEXT[] | MeSH terms (PubMed) or recall classification (OpenFDA) |
+| `search_vector` | TSVECTOR | Generated stored column — `to_tsvector` of title + summary, computed once at insert and used by FTS queries |
 
 ### `symptom_sessions`
 
@@ -498,6 +512,154 @@ The blob is a standard base64-encoded PDF. The `%PDF-` magic bytes encoded as ba
 
 ---
 
+## MCP Resources
+
+Resources are readable URIs that MCP clients can fetch and inject directly into the model's context window — no tool call required. The server exposes four resources across two URI schemes.
+
+All resources return `application/json` content.
+
+---
+
+### `health://articles/recent`
+
+**Type:** static URI
+
+The 50 most recently ingested articles, ordered by `ingested_at DESC`. Useful as a live news feed for grounding responses in current health headlines without running a search.
+
+#### Example response
+
+```json
+[
+  {
+    "id": "3f2a1b...",
+    "source": "WHO",
+    "title": "Largest catch-up initiative delivers over 100 million childhood vaccinations",
+    "summary": "The Big Catch-Up, launched during World Immunization Week 2023...",
+    "url": "https://www.who.int/news/item/24-04-2026-...",
+    "published_at": "2026-04-24T00:01:25.000Z",
+    "ingested_at": "2026-05-18T10:22:11.000Z",
+    "tags": []
+  }
+]
+```
+
+---
+
+### `health://conditions/list`
+
+**Type:** static URI
+
+Distinct medical condition names that have appeared in the `likely_conditions` array of completed symptom-check assessments, with a session count for each. Use this to discover what conditions are represented in the database before fetching detail.
+
+#### Example response
+
+```json
+[
+  { "name": "Bacterial infection", "session_count": 3 },
+  { "name": "Migraine", "session_count": 2 },
+  { "name": "Tension headache", "session_count": 5 },
+  { "name": "Viral infection (influenza, COVID-19)", "session_count": 3 }
+]
+```
+
+Returns an empty array if no sessions have been completed yet.
+
+---
+
+### `health://conditions/{name}`
+
+**Type:** URI template
+
+Detail for a single condition identified by its exact name from `health://conditions/list`. Returns two things:
+
+- **`sessions`** — every completed symptom session that listed this condition in its assessment, with urgency level, primary symptom, and the condition notes
+- **`related_articles`** — up to 5 articles from `health_articles` matched by full-text search on the condition name
+
+URI-encode the condition name: spaces → `%20`, parentheses → `%28` / `%29`.
+
+#### Example
+
+```text
+health://conditions/Tension%20headache
+```
+
+#### Example response
+
+```json
+{
+  "name": "Tension headache",
+  "sessions": [
+    {
+      "session_id": "55c8c230-14f8-438e-9ac6-2f1e5b5b6d0c",
+      "created_at": "2026-05-18T11:04:22.000Z",
+      "primary_symptom": "Headache",
+      "urgency": "ROUTINE",
+      "notes": "Most common cause."
+    }
+  ],
+  "related_articles": [
+    {
+      "source": "NHS",
+      "title": "UKHSA and Stablepharma highlight breakthrough with fridge-free tetanus...",
+      "url": "https://www.gov.uk/government/news/...",
+      "published_at": "2026-03-13T12:31:45.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### `health://session/{session_id}`
+
+**Type:** URI template
+
+Full record for a symptom-check session. Reconstructs each step as a `{ step, question, answer }` turn from the stored answers and the question definitions — so the entire clinical history is human-readable without knowing the internal schema.
+
+Returns a not-found object if the UUID does not exist rather than an error, so clients can handle the case gracefully.
+
+#### Example
+
+```text
+health://session/55c8c230-14f8-438e-9ac6-2f1e5b5b6d0c
+```
+
+#### Example response
+
+```json
+{
+  "session_id": "55c8c230-14f8-438e-9ac6-2f1e5b5b6d0c",
+  "created_at": "2026-05-18T11:04:22.000Z",
+  "completed_at": "2026-05-18T11:05:01.000Z",
+  "turns": [
+    { "step": 0, "question": "What is your primary symptom?", "answer": "Headache" },
+    { "step": 1, "question": "How long have you had this symptom?", "answer": "Less than 24 hours" },
+    { "step": 2, "question": "Rate the severity from 1 (barely noticeable) to 10 (worst possible)", "answer": 7 },
+    { "step": 3, "question": "Do you also have any of these symptoms?...", "answer": { "fever": false, "nausea_vomiting": true, ... } },
+    { "step": 4, "question": "Do you have any of these existing conditions?...", "answer": { "diabetes": false, ... } },
+    { "step": 5, "question": "IMPORTANT — Are you experiencing any of these right now?...", "answer": { "crushing_chest_pain": false, ... } }
+  ],
+  "assessment": {
+    "urgency": "ROUTINE",
+    "urgency_message": "Schedule an appointment when convenient",
+    "likely_conditions": [
+      { "condition": "Tension headache", "notes": "Most common cause." },
+      { "condition": "Migraine", "notes": "Especially if recurring or with light/sound sensitivity." }
+    ],
+    "recommended_action": "Rest, stay hydrated. See your doctor if headaches are recurring...",
+    "disclaimer": "This assessment is for informational purposes only..."
+  }
+}
+```
+
+#### Not-found response
+
+```json
+{ "error": "Session \"00000000-0000-0000-0000-000000000000\" not found" }
+```
+
+---
+
 ## Connecting to Claude
 
 ### Claude Code (CLI)
@@ -530,7 +692,7 @@ claude mcp remove health-intelligence
 
 ### Verify the connection
 
-Ask Claude: *"List the tools available from the health-intelligence server."* Claude should respond with all six tools and their descriptions.
+Ask Claude: *"List the tools and resources available from the health-intelligence server."* Claude should respond with all six tools and four resources.
 
 ---
 
@@ -633,7 +795,7 @@ Open `http://localhost:6274` in your browser. The Inspector will prompt you to c
 
 3. Click **Connect**
 
-The left panel will show **Tools (6)**, **Resources (0)**, and **Prompts (0)** once the handshake completes.
+The left panel will show **Tools (6)**, **Resources (4)**, and **Prompts (0)** once the handshake completes.
 
 > If the server is cold-starting on Render's free tier, the connection may take 30–60 seconds on the first attempt. Wait for "Connected" before proceeding.
 
@@ -1124,6 +1286,15 @@ git push origin feat/your-feature-name
 1. Add handler logic in `src/tools/`
 2. Register the tool inside `createServer()` in `src/server.ts` — include `title`, `readOnlyHint`, and `destructiveHint` annotations (required for Anthropic Directory submission)
 3. Document it in this README and in `VISION.md`
+
+### Adding a new MCP resource
+
+1. Add the query logic in `src/resources/` following the pattern of `articles.ts`, `conditions.ts`, or `sessions.ts`
+2. Import and register inside `createServer()` in `src/server.ts`:
+   - Static URI: `server.registerResource(name, 'health://your/uri', config, readCallback)`
+   - Parameterised: `server.registerResource(name, new ResourceTemplate('health://your/{var}', { list: undefined }), config, readCallback)`
+3. Return `{ contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(...) }] }`
+4. Document the URI, response shape, and any not-found behaviour in the [MCP Resources](#mcp-resources) section of this README
 
 ### Code style
 
