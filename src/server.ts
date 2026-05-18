@@ -11,6 +11,10 @@ import { generateReport } from './tools/generate-report.js';
 import { fetchRecentArticles } from './resources/articles.js';
 import { listConditions, getConditionDetail } from './resources/conditions.js';
 import { getSession } from './resources/sessions.js';
+import { symptomCheckerArgs, buildSymptomCheckerPrompt } from './prompts/symptom-checker.js';
+import { emergencyTriageArgs, buildEmergencyTriagePrompt } from './prompts/emergency-triage.js';
+import { preAppointmentPrepArgs, buildPreAppointmentPrepPrompt } from './prompts/pre-appointment-prep.js';
+import { conditionExplainerArgs, buildConditionExplainerPrompt } from './prompts/condition-explainer.js';
 
 function createServer(): McpServer {
   const server = new McpServer(
@@ -349,6 +353,57 @@ server.registerResource(
       contents: [{ uri: uri.toString(), mimeType: 'application/json', text: JSON.stringify(session, null, 2) }],
     };
   }
+);
+
+// ── prompts ───────────────────────────────────────────────────────────────────
+
+server.registerPrompt(
+  'symptom-checker',
+  {
+    title: 'Guided Symptom Checker',
+    description:
+      'Opens a structured, one-question-at-a-time symptom assessment with a medical disclaimer. ' +
+      'Choose "standard" for a full 6-step clinical history or "fast-track" for a 3-question triage.',
+    argsSchema: symptomCheckerArgs,
+  },
+  ({ language, urgency }) => buildSymptomCheckerPrompt({ language, urgency })
+);
+
+server.registerPrompt(
+  'emergency-triage',
+  {
+    title: 'Emergency Triage',
+    description:
+      'Fast-path prompt for urgent or potentially life-threatening symptoms. ' +
+      'Returns immediate first-aid steps, red flags for calling emergency services, and guidance on finding the nearest appropriate facility.',
+    argsSchema: emergencyTriageArgs,
+  },
+  ({ symptoms }) => buildEmergencyTriagePrompt({ symptoms })
+);
+
+server.registerPrompt(
+  'pre-appointment-prep',
+  {
+    title: 'Pre-Appointment Preparation',
+    description:
+      'Generates a structured checklist to help a patient prepare for a doctor visit: questions to ask, symptoms to track, medications to list, records to bring, and lifestyle context to share. ' +
+      'Optionally accepts a completed symptom-check session_id to personalise the output with recorded patient history.',
+    argsSchema: preAppointmentPrepArgs,
+  },
+  ({ condition, session_id }) => buildPreAppointmentPrepPrompt({ condition, session_id })
+);
+
+server.registerPrompt(
+  'condition-explainer',
+  {
+    title: 'Condition Explainer',
+    description:
+      'Plain-language explanation of a medical condition tailored to the intended audience: ' +
+      '"patient" (reassuring, jargon-free), "caregiver" (practical support guidance), ' +
+      '"child" (simple words and analogies), or "medical student" (clinical depth with pathophysiology).',
+    argsSchema: conditionExplainerArgs,
+  },
+  ({ condition, audience }) => buildConditionExplainerPrompt({ condition, audience })
 );
 
   return server;
