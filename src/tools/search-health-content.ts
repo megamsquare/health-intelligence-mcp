@@ -1,54 +1,74 @@
 import { db } from '../db/client.js';
-import { searchPubMed } from '../services/pubmed.js';
+import { searchPubMed, type PubMedArticle } from '../services/pubmed.js';
+import { TtlCache } from '../lib/cache.js';
 
-export async function searchHealthContent(
-  query: string,
-  limit: number,
-  includePubMed: boolean
-) {
-  // Primary: full-text search with ts_rank relevance scoring
-  let dbResult = await db.query(
+interface SearchResult {
+  stored_articles: Record<string, unknown>[];
+  pubmed_articles: PubMedArticle[];
+  total: number;
+  hint?: string;
+}
+
+// Cache results for 5 minutes — health headlines don't change that fast.
+const cache = new TtlCache<string, SearchResult>(5 * 60_000);
+
+async function dbSearch(query: string, limit: number) {
+  // Primary: FTS against the stored search_vector column (computed once at insert).
+  let result = await db.query(
     `SELECT source, title, summary, url, published_at, tags,
-            ts_rank(to_tsvector('english', title || ' ' || COALESCE(summary, '')),
-                    plainto_tsquery('english', $1)) AS rank
+            ts_rank(search_vector, plainto_tsquery('english', $1)) AS rank
      FROM health_articles
-     WHERE to_tsvector('english', title || ' ' || COALESCE(summary, ''))
-           @@ plainto_tsquery('english', $1)
+     WHERE search_vector @@ plainto_tsquery('english', $1)
      ORDER BY rank DESC, published_at DESC NULLS LAST
      LIMIT $2`,
-    [query, Math.min(limit, 20)]
+    [query, limit]
   );
 
-  // Fallback: ILIKE substring match when FTS returns nothing
-  // (catches single-word queries or terms not in the English FTS dictionary)
-  if (dbResult.rows.length === 0) {
+  // Fallback: ILIKE when FTS returns nothing (single-word or non-dictionary terms).
+  if (result.rows.length === 0) {
     const pattern = `%${query.replace(/[%_\\]/g, '\\$&')}%`;
-    dbResult = await db.query(
+    result = await db.query(
       `SELECT source, title, summary, url, published_at, tags, 0 AS rank
        FROM health_articles
        WHERE title ILIKE $1 OR summary ILIKE $1
        ORDER BY published_at DESC NULLS LAST
        LIMIT $2`,
-      [pattern, Math.min(limit, 20)]
+      [pattern, limit]
     );
   }
 
-  let pubmedArticles: Awaited<ReturnType<typeof searchPubMed>> = [];
-  if (includePubMed) {
-    try {
-      pubmedArticles = await searchPubMed(query, Math.min(limit, 10));
-    } catch {
-      // PubMed is best-effort; don't fail the whole search
-    }
-  }
+  return result.rows;
+}
 
-  return {
-    stored_articles: dbResult.rows,
+export async function searchHealthContent(
+  query: string,
+  limit: number,
+  includePubMed: boolean
+): Promise<SearchResult> {
+  const cacheKey = `${query.toLowerCase().trim()}:${limit}:${includePubMed}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  const cappedLimit = Math.min(limit, 20);
+
+  // Run DB and PubMed in parallel when both are needed.
+  const [rows, pubmedArticles] = await Promise.all([
+    dbSearch(query, cappedLimit),
+    includePubMed
+      ? searchPubMed(query, Math.min(limit, 10)).catch(() => [] as Awaited<ReturnType<typeof searchPubMed>>)
+      : Promise.resolve([] as Awaited<ReturnType<typeof searchPubMed>>),
+  ]);
+
+  const result = {
+    stored_articles: rows,
     pubmed_articles: pubmedArticles,
-    total: dbResult.rows.length + pubmedArticles.length,
+    total: rows.length + pubmedArticles.length,
     hint:
-      dbResult.rows.length === 0
+      rows.length === 0
         ? 'No stored articles matched. The database holds current WHO/CDC/NHS/OpenFDA headlines — try keywords from recent news (e.g. "hantavirus", "vaccine", "recall"). Call ingest_health_news to refresh, or set include_pubmed: true for live PubMed research results.'
         : undefined,
   };
+
+  cache.set(cacheKey, result);
+  return result;
 }

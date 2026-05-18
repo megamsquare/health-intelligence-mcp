@@ -1,3 +1,5 @@
+import { TtlCache } from '../lib/cache.js';
+
 const BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
 
 export interface PubMedArticle {
@@ -9,7 +11,14 @@ export interface PubMedArticle {
   tags: string[];
 }
 
+// PubMed results are stable enough to cache for 10 minutes.
+const pubmedCache = new TtlCache<string, PubMedArticle[]>(10 * 60_000);
+
 export async function searchPubMed(query: string, limit = 10): Promise<PubMedArticle[]> {
+  const cacheKey = `${query.toLowerCase().trim()}:${limit}`;
+  const cached = pubmedCache.get(cacheKey);
+  if (cached) return cached;
+
   const key = process.env.PUBMED_API_KEY ? `&api_key=${process.env.PUBMED_API_KEY}` : '';
 
   const searchRes = await fetch(
@@ -20,7 +29,10 @@ export async function searchPubMed(query: string, limit = 10): Promise<PubMedArt
 
   const searchJson = (await searchRes.json()) as { esearchresult?: { idlist?: string[] } };
   const ids = searchJson.esearchresult?.idlist ?? [];
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    pubmedCache.set(cacheKey, []);
+    return [];
+  }
 
   const summaryRes = await fetch(
     `${BASE}/esummary.fcgi?db=pubmed&id=${ids.join(',')}&retmode=json${key}`,
@@ -31,7 +43,7 @@ export async function searchPubMed(query: string, limit = 10): Promise<PubMedArt
   const summaryJson = (await summaryRes.json()) as { result?: Record<string, any> };
   const result = summaryJson.result ?? {};
 
-  return ids
+  const articles = ids
     .map((id): PubMedArticle | null => {
       const a = result[id];
       if (!a || typeof a !== 'object') return null;
@@ -45,4 +57,7 @@ export async function searchPubMed(query: string, limit = 10): Promise<PubMedArt
       };
     })
     .filter((a): a is PubMedArticle => a !== null);
+
+  pubmedCache.set(cacheKey, articles);
+  return articles;
 }
