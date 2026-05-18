@@ -17,6 +17,7 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 - [Database Schema](#database-schema)
 - [MCP Tools](#mcp-tools)
 - [MCP Resources](#mcp-resources)
+- [MCP Prompts](#mcp-prompts)
 - [Connecting to Claude](#connecting-to-claude)
 - [Connecting to Other Platforms](#connecting-to-other-platforms)
 - [Testing with MCP Inspector](#testing-with-mcp-inspector)
@@ -37,6 +38,7 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 - **Specialist finder** — Google Maps Geocoding + Places API, returns nearby hospitals and clinics sorted by Haversine distance
 - **PDF report generation** — A4 PDF via `pdf-lib` returned as a base64 blob, ready to hand to a doctor
 - **MCP resources** — four readable URIs exposing recent articles, condition intelligence, and session history for context-window injection
+- **MCP prompts** — four pre-built conversation starters covering guided symptom checking, emergency triage, pre-appointment preparation, and condition explanation at adjustable audience depth
 - **Multi-platform** — works with Claude, ChatGPT, Cursor, Windsurf, Cline, Zed, Continue.dev, and any other MCP-compatible client
 
 ---
@@ -660,6 +662,105 @@ health://session/55c8c230-14f8-438e-9ac6-2f1e5b5b6d0c
 
 ---
 
+## MCP Prompts
+
+Prompts are pre-built conversation starters that MCP clients surface as slash commands, quick-actions, or template pickers. The client calls `prompts/get` with the prompt name and any arguments; the server returns a ready-to-send message array that pre-populates the conversation.
+
+All four prompts return a single `user`-role message. Arguments that have defaults are optional — clients that do not supply them receive sensible fallback values.
+
+---
+
+### `symptom-checker`
+
+Opens a structured, one-question-at-a-time symptom assessment. Begins every conversation with a mandatory medical disclaimer and an immediate emergency services redirect for life-threatening situations.
+
+#### Arguments
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `language` | `string` | `"English"` | Language to conduct the assessment in, e.g. `"Spanish"`, `"French"` |
+| `urgency` | `"standard" \| "fast-track"` | `"standard"` | `"standard"` — full 6-step clinical history; `"fast-track"` — 3-question triage for patients who are unwell right now |
+
+#### Behaviour
+
+**`standard` mode** walks through six areas in sequence — primary symptom, duration, severity (1–10), associated symptoms, medical history, emergency flags — and produces a final urgency assessment (`EMERGENCY / URGENT / SOON / ROUTINE`) with likely conditions and recommended action. It also tips the model to use the `start_symptom_check` and `answer_symptom_question` tools if a logged, reportable session is wanted.
+
+**`fast-track` mode** asks three questions only — primary symptom, severity, and emergency warning signs — then gives an immediate urgency assessment. Suited for time-sensitive situations.
+
+Both modes enforce the one-question-at-a-time rule and instruct the model to halt the flow and direct the user to emergency services if any life-threatening answer is given.
+
+---
+
+### `emergency-triage`
+
+Fast-path prompt for urgent or potentially life-threatening symptoms. Returns an action-first response without preamble or clarifying questions.
+
+#### Arguments
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `symptoms` | `string` | Brief description of the symptoms, e.g. `"chest pain radiating to left arm, sweating, difficulty breathing"` |
+
+#### Response structure
+
+The model is instructed to produce exactly four sections in this order:
+
+1. **CALL EMERGENCY SERVICES NOW IF** — explicit red flags that mean 999 / 911 / 112 must be called immediately
+2. **IMMEDIATE FIRST-AID STEPS** — numbered, action-by-action steps to take right now
+3. **DO NOT** — up to five things the patient must not do with these symptoms
+4. **FIND CARE** — appropriate care level and how to locate the nearest facility; the model is told to use the `find_specialists` tool if the user shares their location
+
+---
+
+### `pre-appointment-prep`
+
+Generates a structured checklist to help a patient prepare for a doctor visit. Optionally personalises the output by pulling the patient's recorded symptom history from a completed session.
+
+#### Arguments
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `condition` | `string` | Medical condition or concern, e.g. `"Type 2 diabetes"`, `"recurring migraines"` |
+| `session_id` | `string (UUID)` | Optional. UUID of a completed symptom-check session. When provided, the full Q&A history and assessment are embedded in the prompt. |
+
+#### Checklist sections
+
+- **Questions to ask the doctor** (8–10 specific, meaningful questions about the condition)
+- **Symptoms and changes to track** before the appointment, with a simple log format
+- **Medications and supplements to list**, including a template for doses and frequency
+- **Tests and records to bring** — prior results, imaging, and home monitoring data relevant to the condition
+- **Lifestyle information to share** — diet, exercise, sleep, stress, and occupation context
+
+When `session_id` is supplied and the session is complete, the server fetches it via `getSession()` at `prompts/get` time and injects the patient's symptom history directly into the message, making all five sections specific to what the patient already reported.
+
+---
+
+### `condition-explainer`
+
+Plain-language explanation of a medical condition, with depth and vocabulary calibrated to the intended audience.
+
+#### Arguments
+
+| Argument | Type | Description |
+| --- | --- | --- |
+| `condition` | `string` | Medical condition to explain, e.g. `"atrial fibrillation"`, `"Crohn's disease"` |
+| `audience` | `"patient" \| "caregiver" \| "child" \| "medical student"` | Controls tone, vocabulary, and depth of the explanation |
+
+#### Audience modes
+
+| Audience | Tone and depth |
+| --- | --- |
+| `patient` | Plain language, reassuring, medical terms defined on first use, focus on what the patient can do |
+| `caregiver` | Practical support guidance, how to recognise a flare-up, when to escalate, emotional support considerations |
+| `child` | Simple words, short sentences, at least one relatable analogy; calm and empowering; avoids frightening language |
+| `medical student` | Clinical depth — pathophysiology, diagnostic criteria, classification systems, first- and second-line protocols, monitoring parameters, relevant guideline bodies (NICE, AHA, WHO) |
+
+#### Explanation sections
+
+All audience modes cover: **What it is · Common symptoms · How it's diagnosed · Treatment options · Day-to-day management · When to seek urgent care.** Each section closes with a reminder that the content is educational and the reader should discuss their specific situation with a healthcare provider.
+
+---
+
 ## Connecting to Claude
 
 ### Claude Code (CLI)
@@ -692,7 +793,7 @@ claude mcp remove health-intelligence
 
 ### Verify the connection
 
-Ask Claude: *"List the tools and resources available from the health-intelligence server."* Claude should respond with all six tools and four resources.
+Ask Claude: *"List the tools, resources, and prompts available from the health-intelligence server."* Claude should respond with all six tools, four resources, and four prompts.
 
 ---
 
@@ -795,7 +896,7 @@ Open `http://localhost:6274` in your browser. The Inspector will prompt you to c
 
 3. Click **Connect**
 
-The left panel will show **Tools (6)**, **Resources (4)**, and **Prompts (0)** once the handshake completes.
+The left panel will show **Tools (6)**, **Resources (4)**, and **Prompts (4)** once the handshake completes.
 
 > If the server is cold-starting on Render's free tier, the connection may take 30–60 seconds on the first attempt. Wait for "Connected" before proceeding.
 
@@ -1011,6 +1112,53 @@ The blob starts with `JVBERi0` — the base64 encoding of `%PDF-`. To decode and
 echo "JVBERi0xLjQ..." | base64 -d > report.pdf
 open report.pdf
 ```
+
+---
+
+### Using the prompts
+
+Click the **Prompts** tab in the left panel to see all four prompts. Click a prompt name to expand its argument form, fill in the fields, and click **Get Prompt** to render the message. Inspector displays the resulting conversation and lets you send it directly to a connected model.
+
+#### `symptom-checker`
+
+| Field | Value to enter |
+| --- | --- |
+| `language` | `English` |
+| `urgency` | `standard` |
+
+The rendered message opens with the medical disclaimer and instructs the model to ask one question at a time. Change `urgency` to `fast-track` for a 3-question triage flow, or `language` to `Spanish` (or any language) to run the assessment in that language.
+
+---
+
+#### `emergency-triage`
+
+| Field | Value to enter |
+| --- | --- |
+| `symptoms` | `severe chest pain radiating to left arm, sweating, nausea` |
+
+The rendered message contains four labelled sections: **CALL EMERGENCY SERVICES NOW IF**, **IMMEDIATE FIRST-AID STEPS**, **DO NOT**, and **FIND CARE**.
+
+---
+
+#### `pre-appointment-prep`
+
+| Field | Value to enter |
+| --- | --- |
+| `condition` | `Type 2 diabetes` |
+| `session_id` | *(leave blank, or paste a completed session UUID)* |
+
+Without a `session_id` the checklist is generic for the condition. With a completed session UUID the server fetches the patient's recorded symptom history and embeds it — run `start_symptom_check` through all 6 steps first, copy the `session_id`, then pass it here.
+
+---
+
+#### `condition-explainer`
+
+| Field | Value to enter |
+| --- | --- |
+| `condition` | `atrial fibrillation` |
+| `audience` | `patient` |
+
+Try changing `audience` to `medical student`, `caregiver`, or `child` to see how the tone and depth of the explanation shifts.
 
 ---
 
@@ -1295,6 +1443,36 @@ git push origin feat/your-feature-name
    - Parameterised: `server.registerResource(name, new ResourceTemplate('health://your/{var}', { list: undefined }), config, readCallback)`
 3. Return `{ contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(...) }] }`
 4. Document the URI, response shape, and any not-found behaviour in the [MCP Resources](#mcp-resources) section of this README
+
+### Adding a new MCP prompt
+
+1. Create a file in `src/prompts/` that exports an args schema object and a builder function:
+
+   ```typescript
+   export const myPromptArgs = {
+     param: z.string().describe('...'),
+     optional_param: z.string().optional(),
+   };
+   export function buildMyPrompt(args: { param: string; optional_param?: string }) {
+     return {
+       description: `Short description with ${args.param}`,
+       messages: [{ role: 'user' as const, content: { type: 'text' as const, text: `...` } }],
+     };
+   }
+   ```
+
+2. Import and register inside `createServer()` in `src/server.ts`:
+
+   ```typescript
+   server.registerPrompt('my-prompt', {
+     title: 'Human-readable title',
+     description: 'Shown in client prompt pickers.',
+     argsSchema: myPromptArgs,
+   }, ({ param, optional_param }) => buildMyPrompt({ param, optional_param }));
+   ```
+
+3. If the builder needs async work (e.g. a DB lookup), make it `async` — `registerPrompt` accepts `Promise<GetPromptResult>`
+4. Document the prompt, its arguments, and the rendered message structure in the [MCP Prompts](#mcp-prompts) section of this README
 
 ### Code style
 
