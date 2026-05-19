@@ -19,6 +19,7 @@ import { authMiddleware } from './middleware/auth.js';
 import { revokeRouter } from './routes/revoke.js';
 import { keysRouter } from './routes/keys.js';
 import { orgsRouter } from './routes/orgs.js';
+import { usageRouter } from './routes/usage.js';
 
 function createServer(): McpServer {
   const server = new McpServer(
@@ -420,6 +421,7 @@ app.use(express.json());
 app.use(revokeRouter);
 app.use(keysRouter);
 app.use(orgsRouter);
+app.use(usageRouter);
 
 // Origin allowlist — DNS-rebinding prevention (MCP spec MUST requirement).
 //
