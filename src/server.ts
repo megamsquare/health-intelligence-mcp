@@ -15,6 +15,7 @@ import { symptomCheckerArgs, buildSymptomCheckerPrompt } from './prompts/symptom
 import { emergencyTriageArgs, buildEmergencyTriagePrompt } from './prompts/emergency-triage.js';
 import { preAppointmentPrepArgs, buildPreAppointmentPrepPrompt } from './prompts/pre-appointment-prep.js';
 import { conditionExplainerArgs, buildConditionExplainerPrompt } from './prompts/condition-explainer.js';
+import { authMiddleware } from './middleware/auth.js';
 
 function createServer(): McpServer {
   const server = new McpServer(
@@ -435,7 +436,7 @@ const ALLOWED_ORIGINS = new Set([
   'http://localhost:6274', // MCP Inspector
 ]);
 
-app.post('/mcp', async (req, res) => {
+app.post('/mcp', authMiddleware, async (req, res) => {
   const origin = req.headers.origin;
   if (origin && !ALLOWED_ORIGINS.has(origin)) {
     res.status(403).json({ error: 'Origin not allowed' });
