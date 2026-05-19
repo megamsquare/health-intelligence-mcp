@@ -459,7 +459,14 @@ app.post('/mcp', authMiddleware, async (req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'health-intelligence-mcp', version: '0.1.0' });
+  res.json({
+    status: 'ok',
+    service: 'health-intelligence-mcp',
+    version: '0.1.0',
+    uptime: Math.floor(process.uptime()),
+    environment: process.env.NODE_ENV ?? 'production',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 const PORT = Number(process.env.PORT ?? 3000);
