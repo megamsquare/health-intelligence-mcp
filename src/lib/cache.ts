@@ -18,7 +18,18 @@ export class TtlCache<K, V> {
     return entry.value;
   }
 
-  set(key: K, value: V): void {
-    this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  set(key: K, value: V, ttlMs?: number): void {
+    this.map.set(key, { value, expiresAt: Date.now() + (ttlMs ?? this.ttlMs) });
+  }
+
+  delete(key: K): void {
+    this.map.delete(key);
+  }
+
+  increment(key: K, ttlMs: number): number {
+    const current = this.get(key);
+    const next = typeof current === 'number' ? (current as number) + 1 : 1;
+    this.map.set(key, { value: next as unknown as V, expiresAt: Date.now() + ttlMs });
+    return next;
   }
 }
