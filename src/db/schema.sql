@@ -46,6 +46,71 @@ CREATE INDEX IF NOT EXISTS symptom_sessions_active
   ON symptom_sessions (id)
   WHERE completed_at IS NULL;
 
+-- ─── API keys, organisations, subscriptions, usage ───────────────────────────
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      TEXT        NOT NULL,
+  org_id       TEXT,
+  key_hash     TEXT        NOT NULL UNIQUE,
+  key_prefix   TEXT        NOT NULL,
+  name         TEXT        NOT NULL,
+  revoked      BOOLEAN     NOT NULL DEFAULT FALSE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS api_keys_user_id ON api_keys (user_id);
+CREATE INDEX IF NOT EXISTS api_keys_org_id  ON api_keys (org_id) WHERE org_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS organizations (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT        NOT NULL,
+  owner_id   TEXT        NOT NULL,
+  plan       TEXT        NOT NULL,
+  seat_limit INT         NOT NULL DEFAULT 5,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS organizations_owner_id ON organizations (owner_id);
+
+CREATE TABLE IF NOT EXISTS org_members (
+  org_id    UUID        NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  user_id   TEXT        NOT NULL,
+  role      TEXT        NOT NULL DEFAULT 'member',
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (org_id, user_id)
+);
+
+-- Reverse lookup: all orgs a user belongs to.
+CREATE INDEX IF NOT EXISTS org_members_user_id ON org_members (user_id);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          TEXT        NOT NULL,
+  org_id           UUID        REFERENCES organizations (id) ON DELETE SET NULL,
+  plan             TEXT        NOT NULL,
+  status           TEXT        NOT NULL,
+  calls_per_day    INT         NOT NULL,
+  sessions_per_day INT         NOT NULL,
+  expires_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS subscriptions_user_id ON subscriptions (user_id);
+CREATE INDEX IF NOT EXISTS subscriptions_org_id  ON subscriptions (org_id) WHERE org_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS usage_log (
+  id        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id   TEXT        NOT NULL,
+  tool_name TEXT        NOT NULL,
+  called_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Supports per-user rate-limit window queries (WHERE user_id = ? AND called_at > ?).
+CREATE INDEX IF NOT EXISTS usage_log_user_time ON usage_log (user_id, called_at DESC);
+-- Supports per-tool analytics aggregations.
+CREATE INDEX IF NOT EXISTS usage_log_tool_time ON usage_log (tool_name, called_at DESC);
+
 -- ─── Migration for existing databases ────────────────────────────────────────
 -- Run this block once if health_articles already exists:
 --
