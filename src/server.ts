@@ -16,6 +16,7 @@ import { emergencyTriageArgs, buildEmergencyTriagePrompt } from './prompts/emerg
 import { preAppointmentPrepArgs, buildPreAppointmentPrepPrompt } from './prompts/pre-appointment-prep.js';
 import { conditionExplainerArgs, buildConditionExplainerPrompt } from './prompts/condition-explainer.js';
 import { authMiddleware } from './middleware/auth.js';
+import { revokeRouter } from './routes/revoke.js';
 
 function createServer(): McpServer {
   const server = new McpServer(
@@ -414,6 +415,7 @@ server.registerPrompt(
 
 const app = express();
 app.use(express.json());
+app.use(revokeRouter);
 
 // Origin allowlist — DNS-rebinding prevention (MCP spec MUST requirement).
 //
