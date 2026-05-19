@@ -5,11 +5,10 @@ import { db } from '../db/client.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 export const keysRouter = Router();
-keysRouter.use(authMiddleware);
 
 // ── POST /mcp/keys ────────────────────────────────────────────────────────────
 
-keysRouter.post('/mcp/keys', async (req: Request, res: Response) => {
+keysRouter.post('/mcp/keys', authMiddleware, async (req: Request, res: Response) => {
   const { name } = req.body as { name?: unknown };
   if (typeof name !== 'string' || !name.trim()) {
     res.status(400).json({ error: 'name must be a non-empty string' });
@@ -39,7 +38,7 @@ keysRouter.post('/mcp/keys', async (req: Request, res: Response) => {
 
 // ── GET /mcp/keys ─────────────────────────────────────────────────────────────
 
-keysRouter.get('/mcp/keys', async (req: Request, res: Response) => {
+keysRouter.get('/mcp/keys', authMiddleware, async (req: Request, res: Response) => {
   const { rows } = await db.query(
     `SELECT id, key_prefix, name, last_used_at
      FROM api_keys
@@ -52,7 +51,7 @@ keysRouter.get('/mcp/keys', async (req: Request, res: Response) => {
 
 // ── DELETE /mcp/keys/:id ──────────────────────────────────────────────────────
 
-keysRouter.delete('/mcp/keys/:id', async (req: Request, res: Response) => {
+keysRouter.delete('/mcp/keys/:id', authMiddleware, async (req: Request, res: Response) => {
   const { rowCount } = await db.query(
     `UPDATE api_keys SET revoked = true
      WHERE id = $1 AND user_id = $2 AND revoked = false`,

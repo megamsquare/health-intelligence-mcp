@@ -5,7 +5,6 @@ import { db } from '../db/client.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 export const orgsRouter = Router();
-orgsRouter.use(authMiddleware);
 
 function generateApiKey(): { rawKey: string; keyHash: string; keyPrefix: string } {
   const rawKey = randomBytes(32).toString('hex');
@@ -18,7 +17,7 @@ function generateApiKey(): { rawKey: string; keyHash: string; keyPrefix: string 
 
 // ── POST /orgs ────────────────────────────────────────────────────────────────
 
-orgsRouter.post('/orgs', async (req: Request, res: Response) => {
+orgsRouter.post('/orgs', authMiddleware, async (req: Request, res: Response) => {
   const { name, plan, seat_limit, calls_per_day, sessions_per_day, expires_at } =
     req.body as Record<string, unknown>;
 
@@ -67,7 +66,7 @@ orgsRouter.post('/orgs', async (req: Request, res: Response) => {
 
 // ── POST /orgs/:id/members ────────────────────────────────────────────────────
 
-orgsRouter.post('/orgs/:id/members', async (req: Request, res: Response) => {
+orgsRouter.post('/orgs/:id/members', authMiddleware, async (req: Request, res: Response) => {
   const orgId = req.params.id;
   const callerId = req.user!.sub;
   const { user_id, key_name } = req.body as { user_id?: unknown; key_name?: unknown };
@@ -133,7 +132,7 @@ orgsRouter.post('/orgs/:id/members', async (req: Request, res: Response) => {
 
 // ── DELETE /orgs/:id/members/:userId ─────────────────────────────────────────
 
-orgsRouter.delete('/orgs/:id/members/:userId', async (req: Request, res: Response) => {
+orgsRouter.delete('/orgs/:id/members/:userId', authMiddleware, async (req: Request, res: Response) => {
   const { id: orgId, userId } = req.params;
   const callerId = req.user!.sub;
 
