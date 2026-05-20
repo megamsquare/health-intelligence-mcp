@@ -24,6 +24,11 @@ export interface AuthPayload {
 if (!process.env.SHARED_SECRET) throw new Error('SHARED_SECRET environment variable is required');
 const secret: string = process.env.SHARED_SECRET;
 
+function wwwAuthenticate(): string {
+  const base = process.env.MCP_SERVER_URL ?? 'http://localhost:3000';
+  return `Bearer realm="Health Intelligence MCP", resource_metadata="${base}/.well-known/oauth-protected-resource"`;
+}
+
 function toYYYYMMDD(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -31,7 +36,7 @@ function toYYYYMMDD(d: Date): string {
 export async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
-    res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: 'Missing or malformed Authorization header' });
+    res.set('WWW-Authenticate', wwwAuthenticate()).status(401).json({ error: 'Missing or malformed Authorization header' });
     return;
   }
 
@@ -41,7 +46,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   try {
     payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as unknown as AuthPayload;
   } catch {
-    res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: 'Invalid or expired token' });
+    res.set('WWW-Authenticate', wwwAuthenticate()).status(401).json({ error: 'Invalid or expired token' });
     return;
   }
 
@@ -53,7 +58,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   if (payload.jti) {
     const revoked = cache.get<boolean>(`mcp:revoked:${payload.jti}`);
     if (revoked) {
-      res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: 'Token has been revoked' });
+      res.set('WWW-Authenticate', wwwAuthenticate()).status(401).json({ error: 'Token has been revoked' });
       return;
     }
   }

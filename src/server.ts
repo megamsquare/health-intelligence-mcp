@@ -458,6 +458,17 @@ app.post('/mcp', authMiddleware, async (req, res) => {
   await transport.handleRequest(req, res, req.body);
 });
 
+// Tells OAuth-aware MCP clients (e.g. MCP Inspector) that this server uses
+// static Bearer tokens — no authorization server exists, tokens must be
+// provided directly via the Authorization header.
+app.get('/.well-known/oauth-protected-resource', (_req, res) => {
+  const base = process.env.MCP_SERVER_URL ?? `http://localhost:${PORT}`;
+  res.json({
+    resource: base,
+    bearer_methods_supported: ['header'],
+  });
+});
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
