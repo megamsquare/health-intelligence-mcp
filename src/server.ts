@@ -2,8 +2,10 @@ import 'node:process';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { ingestHealthNews } from './tools/ingest-health-news.js';
+import { ingestDocument } from './tools/ingest-document.js';
 import { searchHealthContent } from './tools/search-health-content.js';
 import { startSymptomCheck, answerSymptomQuestion } from './tools/symptom-checker.js';
 import { findNearbySpecialists } from './services/google-maps.js';
@@ -21,6 +23,11 @@ import { revokeRouter } from './routes/revoke.js';
 import { keysRouter } from './routes/keys.js';
 import { orgsRouter } from './routes/orgs.js';
 import { usageRouter } from './routes/usage.js';
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB cap
+});
 
 function createServer(): McpServer {
   const server = new McpServer(
@@ -80,6 +87,51 @@ server.registerTool(
       return {
         isError: true,
         content: [{ type: 'text', text: `Ingestion failed: ${err instanceof Error ? err.message : String(err)}` }],
+      };
+    }
+  }
+);
+
+// ── ingest_document ───────────────────────────────────────────────────────────
+
+server.registerTool(
+  'ingest_document',
+  {
+    description:
+      'Upload a medical document (PDF, DOCX, TXT, Markdown, CSV) to make its contents searchable and available for assessment enrichment. ' +
+      'Accepts the file as a base64-encoded string. Duplicate uploads of the same file are silently ignored (SHA-256 dedup). ' +
+      'Once ingested, the document text is indexed by FTS and can be returned as a citation source in symptom assessments. ' +
+      'Supported formats: PDF, DOCX, TXT, MD, CSV, JSON. Maximum file size: 20 MB.',
+    inputSchema: {
+      content_base64: z
+        .string()
+        .describe('Base64-encoded file content'),
+      filename: z
+        .string()
+        .describe('Original filename including extension, e.g. "malaria-treatment-guidelines-2024.pdf"'),
+      mime_type: z
+        .string()
+        .optional()
+        .describe('MIME type of the file, e.g. "application/pdf" or "application/vnd.openxmlformats-officedocument.wordprocessingml.document". Inferred from filename if omitted.'),
+    },
+    annotations: {
+      title: 'Ingest Medical Document',
+      readOnlyHint: false,
+      destructiveHint: false,
+    },
+  },
+  async ({ content_base64, filename, mime_type }) => {
+    try {
+      const buffer = Buffer.from(content_base64, 'base64');
+      if (buffer.length > 20 * 1024 * 1024) {
+        return { isError: true, content: [{ type: 'text', text: 'File exceeds 20 MB limit.' }] };
+      }
+      const result = await ingestDocument(buffer, filename, mime_type ?? 'application/octet-stream');
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Document ingestion failed: ${err instanceof Error ? err.message : String(err)}` }],
       };
     }
   }
@@ -300,7 +352,7 @@ server.registerResource(
   'health://articles/recent',
   {
     title: 'Recent Health Articles',
-    description: 'The 50 most recently ingested articles from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, and Africa CDC (7 sources). Call ingest_health_news to refresh.',
+    description: 'The 50 most recently ingested articles from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, Africa CDC, and doctor-uploaded documents. Source field is one of: WHO | CDC | NHS | OpenFDA | ECDC | PAHO | AfricaCDC | Upload.',
     mimeType: 'application/json',
   },
   async (_uri) => {
@@ -519,6 +571,27 @@ app.get('/reports/:session_id.pdf', async (req, res) => {
     res.send(pdfBytes);
   } catch (err) {
     res.status(404).json({ error: err instanceof Error ? err.message : 'Report not found' });
+  }
+});
+
+// Document upload endpoint — doctors POST a file (multipart/form-data, field name "file").
+// Auth-gated with the same Bearer token used for MCP. Supports PDF, DOCX, TXT, MD, CSV up to 20 MB.
+app.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'No file received. Send a multipart/form-data POST with a field named "file".' });
+    return;
+  }
+  try {
+    const result = await ingestDocument(req.file.buffer, req.file.originalname, req.file.mimetype);
+    console.log(`[upload] user=${req.user?.sub} file="${req.file.originalname}" size=${req.file.size} ingested=${result.ingested}`);
+    if (result.ingested) {
+      db.query('INSERT INTO usage_log (user_id, tool_name) VALUES ($1, $2)', [req.user?.sub ?? 'anonymous', 'upload:document'])
+        .catch((err: unknown) => console.error('[usage-log] insert failed:', err instanceof Error ? err.message : String(err)));
+    }
+    res.json(result);
+  } catch (err) {
+    console.error(`[upload] error: ${err instanceof Error ? err.message : String(err)}`);
+    res.status(422).json({ error: err instanceof Error ? err.message : 'Document processing failed' });
   }
 });
 

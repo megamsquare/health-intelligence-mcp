@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS health_articles (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  source        TEXT        NOT NULL CHECK (source IN ('WHO', 'CDC', 'NHS', 'OpenFDA', 'PubMed', 'ECDC', 'PAHO', 'AfricaCDC')),
+  source        TEXT        NOT NULL CHECK (source IN ('WHO', 'CDC', 'NHS', 'OpenFDA', 'PubMed', 'ECDC', 'PAHO', 'AfricaCDC', 'Upload')),
   external_id   TEXT        NOT NULL,
   title         TEXT        NOT NULL,
   summary       TEXT,
@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS usage_log (
 CREATE INDEX IF NOT EXISTS usage_log_user_time ON usage_log (user_id, called_at DESC);
 -- Supports per-tool analytics aggregations.
 CREATE INDEX IF NOT EXISTS usage_log_tool_time ON usage_log (tool_name, called_at DESC);
+
+-- ─── Migration: add Upload source ─────────────────────────────────────────────
+-- Run once on existing databases to allow doctor document uploads:
+--
+--   ALTER TABLE health_articles
+--     DROP CONSTRAINT IF EXISTS health_articles_source_check;
+--   ALTER TABLE health_articles
+--     ADD CONSTRAINT health_articles_source_check
+--     CHECK (source IN ('WHO','CDC','NHS','OpenFDA','PubMed','ECDC','PAHO','AfricaCDC','Upload'));
 
 -- ─── Migration for existing databases ────────────────────────────────────────
 -- Run this block once if health_articles already exists:
