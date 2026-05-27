@@ -18,7 +18,7 @@ const AUDIENCE_GUIDANCE: Record<string, string> = {
 
   child: `Write for a child or young person (assume age 8–14 unless otherwise stated). Use simple words, short sentences, and at least one relatable analogy (e.g. comparing the body to something familiar). Avoid frightening language. The tone should be calm, curious, and empowering. If something is complex, say "your doctor or grown-up can explain more about this part."`,
 
-  'medical student': `Write for a medical student who wants clinical depth. Include: pathophysiology, epidemiology, diagnostic criteria (with relevant classification systems or scoring tools where applicable), first-line and second-line treatment protocols, monitoring parameters, and common complications. Use standard medical terminology. Cite guideline bodies (e.g. NICE, AHA, WHO) where relevant.`,
+  'medical student': `Write for a medical student who wants clinical depth. Include: pathophysiology, epidemiology, diagnostic criteria (with relevant classification systems or scoring tools where applicable), first-line and second-line treatment protocols, monitoring parameters, and common complications. Use standard medical terminology. Cite guideline bodies (e.g. NICE, AHA, WHO, CDC, ECDC) where relevant. Include the WHO ICD-11 code for this condition where known (e.g. "ICD-11: CA40 — Malaria") to enable clinical record linkage.`,
 };
 
 export function buildConditionExplainerPrompt(args: { condition: string; audience: string }) {
@@ -36,6 +36,8 @@ Condition: ${args.condition}
 Audience: ${args.audience}
 
 Audience guidance: ${audienceGuidance}
+
+Where a WHO ICD-11 code exists for ${args.condition}, state it at the top of your response (e.g. "ICD-11: CA40 — Malaria") so the patient or clinician can reference the official clinical classification. Where WHO, CDC, NHS, ECDC, PAHO, or Africa CDC guidelines are directly relevant, cite them by name.
 
 Explain **${args.condition}** covering all of the following sections. Adjust the depth, vocabulary, and tone for a **${args.audience}** throughout:
 

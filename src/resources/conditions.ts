@@ -13,6 +13,8 @@ export interface ConditionDetail {
     primary_symptom: string;
     urgency: string;
     notes: string;
+    icd_code: string | null;
+    cited_sources: string[];
   }>;
   related_articles: Array<{
     source: string;
@@ -44,12 +46,20 @@ export async function getConditionDetail(name: string): Promise<ConditionDetail>
       primary_symptom: string;
       urgency: string;
       notes: string;
+      icd_code: string | null;
+      cited_sources: string[];
     }>(
       `SELECT s.id AS session_id,
               s.created_at,
               s.answers->>'primary_symptom' AS primary_symptom,
               s.assessment->>'urgency' AS urgency,
-              c->>'notes' AS notes
+              c->>'notes' AS notes,
+              c->>'icd_code' AS icd_code,
+              COALESCE(
+                (SELECT jsonb_agg(src->>'source')
+                 FROM jsonb_array_elements(c->'sources') AS src),
+                '[]'::jsonb
+              ) AS cited_sources
        FROM symptom_sessions s,
             jsonb_array_elements(s.assessment->'likely_conditions') AS c
        WHERE s.completed_at IS NOT NULL

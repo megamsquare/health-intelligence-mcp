@@ -20,15 +20,25 @@ export async function buildPreAppointmentPrepPrompt(args: { condition: string; s
     if (session?.completed_at) {
       const answers = Object.fromEntries(session.turns.map(t => [t.question.split('?')[0].trim(), t.answer]));
       const assessment = session.assessment as Record<string, unknown> | null;
-      const likelyConds = Array.isArray(assessment?.likely_conditions)
-        ? (assessment.likely_conditions as Array<{ condition: string }>).map(c => c.condition).join(', ')
-        : 'not determined';
+      type AssessmentCondition = { condition: string; icd_code?: string; notes?: string; sources?: Array<{ source: string; title: string }> };
+      const conditionLines = Array.isArray(assessment?.likely_conditions)
+        ? (assessment.likely_conditions as AssessmentCondition[]).map(c => {
+            const icd = c.icd_code ? ` (ICD-11: ${c.icd_code})` : '';
+            const src = c.sources && c.sources.length > 0
+              ? ` — cited by ${c.sources.map(s => s.source).join(', ')}`
+              : '';
+            return `  • ${c.condition}${icd}${src}`;
+          }).join('\n')
+        : '  • Not determined';
 
       historyBlock = `
 **Patient symptom history (session ${args.session_id})**
 ${session.turns.map(t => `- ${t.question}: ${JSON.stringify(t.answer)}`).join('\n')}
 Assessment urgency: ${assessment?.urgency ?? 'N/A'}
-Likely conditions from assessment: ${likelyConds}
+Likely conditions from assessment:
+${conditionLines}
+
+Where ICD-11 codes are shown, include them in the "Records to bring" section so the doctor can quickly reference the clinical classification. Where clinical bodies (WHO, CDC, NHS, ECDC, PAHO, Africa CDC) are cited, the patient can mention these sources to their doctor.
 
 Use this history to make the questions and checklists below more specific to what the patient has already reported.
 `;

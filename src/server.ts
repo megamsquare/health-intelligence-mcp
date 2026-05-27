@@ -27,9 +27,10 @@ function createServer(): McpServer {
     { name: 'health-intelligence', version: '0.1.0' },
     {
       instructions:
-        'Use ingest_health_news to populate the article database, then search_health_content to find articles. ' +
-        'For symptom checking: call start_symptom_check, then call answer_symptom_question for each step until done:true is returned. ' +
-        'generate_medical_report requires a completed symptom session (done:true). ' +
+        'Use ingest_health_news to populate the article database (7 sources: WHO, CDC, NHS, OpenFDA, ECDC, PAHO, AfricaCDC), then search_health_content to find articles. ' +
+        'For symptom checking: ALWAYS ask the patient for their country first, then call start_symptom_check with the country param, then call answer_symptom_question for each step until done:true is returned. ' +
+        'The completed assessment includes ICD-11 codes and citations from clinical bodies for each condition. ' +
+        'generate_medical_report requires a completed symptom session (done:true) — it returns a download URL for a PDF that includes ICD codes and source citations. ' +
         'Always remind users that health information here is not a substitute for professional medical advice.',
     }
   );
@@ -90,7 +91,7 @@ server.registerTool(
   'search_health_content',
   {
     description:
-      'Full-text search across stored WHO/CDC/NHS/OpenFDA articles, with optional live PubMed research search. ' +
+      'Full-text search across stored articles from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, and Africa CDC, with optional live PubMed research search. ' +
       'Returns stored articles ranked by relevance plus optional PubMed results. ' +
       'Call ingest_health_news first if stored results are empty. ' +
       'Does NOT diagnose conditions — use start_symptom_check for symptom assessment.',
@@ -299,7 +300,7 @@ server.registerResource(
   'health://articles/recent',
   {
     title: 'Recent Health Articles',
-    description: 'The 50 most recently ingested articles from WHO, CDC, NHS, and OpenFDA.',
+    description: 'The 50 most recently ingested articles from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, and Africa CDC (7 sources). Call ingest_health_news to refresh.',
     mimeType: 'application/json',
   },
   async (_uri) => {
@@ -333,7 +334,7 @@ server.registerResource(
   new ResourceTemplate('health://conditions/{name}', { list: undefined }),
   {
     title: 'Condition Detail',
-    description: 'Sessions and related articles for a named condition. Use the exact name from health://conditions/list.',
+    description: 'Sessions and related articles for a named condition. Each session entry includes the ICD-11 code and clinical bodies cited (WHO, CDC, NHS, ECDC, PAHO, Africa CDC) for that condition. Use the exact name from health://conditions/list.',
     mimeType: 'application/json',
   },
   async (uri, { name }) => {
@@ -350,7 +351,7 @@ server.registerResource(
   new ResourceTemplate('health://session/{session_id}', { list: undefined }),
   {
     title: 'Symptom Session',
-    description: 'Full session record: all question/answer turns and the final assessment.',
+    description: 'Full session record: all question/answer turns and the final assessment. The assessment includes urgency level, likely conditions with ICD-11 codes, citations from WHO/CDC/NHS/ECDC/PAHO/AfricaCDC, and recommended action.',
     mimeType: 'application/json',
   },
   async (uri, { session_id }) => {
@@ -374,7 +375,8 @@ server.registerPrompt(
     title: 'Guided Symptom Checker',
     description:
       'Opens a structured, one-question-at-a-time symptom assessment with a medical disclaimer. ' +
-      'Choose "standard" for a full 6-step clinical history or "fast-track" for a 3-question triage.',
+      'Choose "standard" for a full 6-step clinical history (asks for country to enable region-specific conditions like malaria, dengue, typhoid) ' +
+      'or "fast-track" for a 3-question triage. Assessment results include ICD-11 codes and citations from WHO, CDC, NHS, ECDC, PAHO, and Africa CDC.',
     argsSchema: symptomCheckerArgs,
   },
   ({ language, urgency }) => buildSymptomCheckerPrompt({ language, urgency })
@@ -386,10 +388,11 @@ server.registerPrompt(
     title: 'Emergency Triage',
     description:
       'Fast-path prompt for urgent or potentially life-threatening symptoms. ' +
-      'Returns immediate first-aid steps, red flags for calling emergency services, and guidance on finding the nearest appropriate facility.',
+      'Returns immediate first-aid steps, red flags for calling emergency services (with country-specific emergency numbers), ' +
+      'and guidance on finding the nearest appropriate facility. Pass country for region-aware advice.',
     argsSchema: emergencyTriageArgs,
   },
-  ({ symptoms }) => buildEmergencyTriagePrompt({ symptoms })
+  ({ symptoms, country }) => buildEmergencyTriagePrompt({ symptoms, country })
 );
 
 server.registerPrompt(
@@ -398,7 +401,7 @@ server.registerPrompt(
     title: 'Pre-Appointment Preparation',
     description:
       'Generates a structured checklist to help a patient prepare for a doctor visit: questions to ask, symptoms to track, medications to list, records to bring, and lifestyle context to share. ' +
-      'Optionally accepts a completed symptom-check session_id to personalise the output with recorded patient history.',
+      'Optionally accepts a completed symptom-check session_id to personalise the output with recorded patient history, including ICD-11 codes and clinical citations from WHO, CDC, NHS, ECDC, PAHO, and Africa CDC.',
     argsSchema: preAppointmentPrepArgs,
   },
   ({ condition, session_id }) => buildPreAppointmentPrepPrompt({ condition, session_id })
