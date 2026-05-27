@@ -2,9 +2,11 @@ import { db } from '../db/client.js';
 import { QUESTIONS, TOTAL_STEPS, formatQuestion } from '../symptom/questions.js';
 import { generateAssessment } from '../symptom/assessment.js';
 
-export async function startSymptomCheck() {
+export async function startSymptomCheck(country?: string) {
+  const initialAnswers = country ? JSON.stringify({ country }) : '{}';
   const result = await db.query(
-    `INSERT INTO symptom_sessions (current_step, answers) VALUES (0, '{}') RETURNING id`
+    `INSERT INTO symptom_sessions (current_step, answers) VALUES (0, $1) RETURNING id`,
+    [initialAnswers]
   );
   const session_id = result.rows[0].id as string;
 
@@ -13,6 +15,7 @@ export async function startSymptomCheck() {
     step: 0,
     total_steps: TOTAL_STEPS,
     question: formatQuestion(QUESTIONS[0]),
+    ...(country ? { region_context: `Location recorded: ${country}. Region-specific conditions will be included in your assessment.` } : {}),
   };
 }
 

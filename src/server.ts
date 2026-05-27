@@ -128,18 +128,25 @@ server.registerTool(
   {
     description:
       'Begin a multi-step symptom assessment. Creates a new session and returns a session_id plus the first question. ' +
+      'Always ask the user for their country before calling this tool — it enables region-specific conditions ' +
+      'such as malaria (Nigeria, Ghana, Kenya…), dengue (Brazil, India, Philippines…), and typhoid to appear in the assessment. ' +
       'Call answer_symptom_question with the session_id and each answer to progress through all steps. ' +
       'The assessment is NOT a medical diagnosis — it is informational only.',
-    inputSchema: {},
+    inputSchema: {
+      country: z
+        .string()
+        .optional()
+        .describe('Country or region the patient is in, e.g. "Nigeria", "India", "Brazil". Enables region-specific conditions in the assessment.'),
+    },
     annotations: {
       title: 'Start Symptom Check',
       readOnlyHint: false,
       destructiveHint: false,
     },
   },
-  async () => {
+  async ({ country }) => {
     try {
-      const result = await startSymptomCheck();
+      const result = await startSymptomCheck(country);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return {
