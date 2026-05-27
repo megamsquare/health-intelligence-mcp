@@ -19,3 +19,9 @@ export const db = new Pool({
   max: 10,
   idleTimeoutMillis: 30_000,
 });
+
+// Neon serverless terminates idle connections. Without this listener Node.js
+// treats the pool error event as unhandled and dumps the full client object.
+db.on('error', (err) => {
+  console.error('[db-pool] idle client error:', err.message);
+});
