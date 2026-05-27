@@ -104,6 +104,33 @@ function extractCdata(xml: string, tag: string): string | null {
   return m ? (m[1] ?? m[2] ?? null)?.trim() ?? null : null;
 }
 
+export async function fetchEcdcNews(): Promise<HealthArticle[]> {
+  const res = await fetch(
+    'https://www.ecdc.europa.eu/en/rss.xml',
+    { signal: AbortSignal.timeout(10_000) }
+  );
+  if (!res.ok) throw new Error(`ECDC feed returned ${res.status}`);
+  return parseRss(await res.text(), 'ECDC');
+}
+
+export async function fetchPahoNews(): Promise<HealthArticle[]> {
+  const res = await fetch(
+    'https://www.paho.org/en/rss-feeds/news',
+    { signal: AbortSignal.timeout(10_000) }
+  );
+  if (!res.ok) throw new Error(`PAHO feed returned ${res.status}`);
+  return parseRss(await res.text(), 'PAHO');
+}
+
+export async function fetchAfricaCdcNews(): Promise<HealthArticle[]> {
+  const res = await fetch(
+    'https://africacdc.org/feed/',
+    { signal: AbortSignal.timeout(10_000) }
+  );
+  if (!res.ok) throw new Error(`Africa CDC feed returned ${res.status}`);
+  return parseRss(await res.text(), 'AfricaCDC');
+}
+
 function stripHtml(html: string): string {
   return html
     .replace(/<[^>]+>/g, '')

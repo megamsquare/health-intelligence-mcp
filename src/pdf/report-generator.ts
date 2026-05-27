@@ -91,9 +91,15 @@ export async function generateMedicalReport(data: ReportData): Promise<string> {
   // Possible conditions
   y = drawSection(page, bold, 'POSSIBLE CONDITIONS', y, blue, width);
   for (const c of data.assessment.likely_conditions) {
-    y = drawLine(page, bold, `•  ${c.condition}`, MARGIN + 4, y, 10, black);
+    const label = c.icd_code ? `•  ${c.condition}  (ICD-11: ${c.icd_code})` : `•  ${c.condition}`;
+    y = drawLine(page, bold, label, MARGIN + 4, y, 10, black);
     if (c.notes) {
       y = drawWrapped(page, regular, c.notes, MARGIN + 14, y, 9, muted, width - MARGIN * 2 - 18);
+    }
+    if (c.sources && c.sources.length > 0) {
+      for (const s of c.sources) {
+        y = drawWrapped(page, regular, `[${s.source}] ${s.title}`, MARGIN + 14, y, 8, rgb(0.2, 0.35, 0.7), width - MARGIN * 2 - 18);
+      }
     }
     y -= 4;
   }

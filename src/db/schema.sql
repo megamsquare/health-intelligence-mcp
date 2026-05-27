@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS health_articles (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  source        TEXT        NOT NULL CHECK (source IN ('WHO', 'CDC', 'NHS', 'OpenFDA', 'PubMed')),
+  source        TEXT        NOT NULL CHECK (source IN ('WHO', 'CDC', 'NHS', 'OpenFDA', 'PubMed', 'ECDC', 'PAHO', 'AfricaCDC')),
   external_id   TEXT        NOT NULL,
   title         TEXT        NOT NULL,
   summary       TEXT,

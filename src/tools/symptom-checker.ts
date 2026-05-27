@@ -1,6 +1,8 @@
 import { db } from '../db/client.js';
 import { QUESTIONS, TOTAL_STEPS, formatQuestion } from '../symptom/questions.js';
-import { generateAssessment } from '../symptom/assessment.js';
+import { generateAssessment, type LikelyCondition } from '../symptom/assessment.js';
+import { searchHealthContent } from './search-health-content.js';
+import { lookupIcd11 } from '../services/icd11.js';
 
 export async function startSymptomCheck(country?: string) {
   const initialAnswers = country ? JSON.stringify({ country }) : '{}';
@@ -50,17 +52,41 @@ export async function answerSymptomQuestion(
   if (nextStep >= TOTAL_STEPS) {
     const assessment = generateAssessment(answers as Parameters<typeof generateAssessment>[0]);
 
+    // Enrich each condition with real source articles and ICD-11 code in parallel.
+    const enrichedConditions: LikelyCondition[] = await Promise.all(
+      assessment.likely_conditions.map(async (c) => {
+        const [searchResult, icdResult] = await Promise.allSettled([
+          searchHealthContent(c.condition, 3, false),
+          lookupIcd11(c.condition),
+        ]);
+        return {
+          ...c,
+          icd_code: icdResult.status === 'fulfilled' && icdResult.value
+            ? icdResult.value.code : undefined,
+          sources: searchResult.status === 'fulfilled'
+            ? searchResult.value.stored_articles.slice(0, 2).map(a => ({
+                source: String(a.source),
+                title:  String(a.title),
+                url:    a.url ? String(a.url) : null,
+              }))
+            : [],
+        };
+      })
+    );
+
+    const enrichedAssessment = { ...assessment, likely_conditions: enrichedConditions };
+
     await db.query(
       `UPDATE symptom_sessions
        SET answers = $1, assessment = $2, current_step = $3, completed_at = NOW()
        WHERE id = $4`,
-      [JSON.stringify(answers), JSON.stringify(assessment), nextStep, session_id]
+      [JSON.stringify(answers), JSON.stringify(enrichedAssessment), nextStep, session_id]
     );
 
     return {
       done: true as const,
       session_id,
-      assessment,
+      assessment: enrichedAssessment,
     };
   }
 

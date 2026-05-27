@@ -1,8 +1,16 @@
 export type UrgencyLevel = 'EMERGENCY' | 'URGENT' | 'SOON' | 'ROUTINE';
 
+export interface ConditionSource {
+  source: string;
+  title: string;
+  url: string | null;
+}
+
 export interface LikelyCondition {
   condition: string;
   notes: string;
+  icd_code?: string;
+  sources?: ConditionSource[];
 }
 
 export interface Assessment {

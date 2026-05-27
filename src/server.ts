@@ -40,14 +40,14 @@ server.registerTool(
   'ingest_health_news',
   {
     description:
-      'Fetch and store verified health news from WHO, CDC, NHS, and/or OpenFDA drug-recall alerts. ' +
+      'Fetch and store verified health news from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, and Africa CDC. ' +
       'Call this to refresh the article database before searching. Returns counts of new and duplicate articles. ' +
       'Does NOT search symptoms or conditions — use search_health_content for that.',
     inputSchema: {
       sources: z
-        .array(z.enum(['WHO', 'CDC', 'NHS', 'OpenFDA']))
-        .default(['WHO', 'CDC', 'NHS', 'OpenFDA'])
-        .describe('Which sources to fetch. Defaults to all four.'),
+        .array(z.enum(['WHO', 'CDC', 'NHS', 'OpenFDA', 'ECDC', 'PAHO', 'AfricaCDC']))
+        .default(['WHO', 'CDC', 'NHS', 'OpenFDA', 'ECDC', 'PAHO', 'AfricaCDC'])
+        .describe('Which sources to fetch. Defaults to all seven.'),
     },
     annotations: {
       title: 'Ingest Health News',

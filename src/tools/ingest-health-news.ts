@@ -1,13 +1,20 @@
 import { db } from '../db/client.js';
-import { fetchWhoNews, fetchCdcNews, fetchNhsNews, type HealthArticle } from '../services/health-feeds.js';
+import {
+  fetchWhoNews, fetchCdcNews, fetchNhsNews,
+  fetchEcdcNews, fetchPahoNews, fetchAfricaCdcNews,
+  type HealthArticle,
+} from '../services/health-feeds.js';
 import { fetchFdaAlerts } from '../services/openfda.js';
 
-type Source = 'WHO' | 'CDC' | 'NHS' | 'OpenFDA';
+export type Source = 'WHO' | 'CDC' | 'NHS' | 'OpenFDA' | 'ECDC' | 'PAHO' | 'AfricaCDC';
 
 const FETCHERS: Record<Source, () => Promise<HealthArticle[]>> = {
-  WHO: fetchWhoNews,
-  CDC: fetchCdcNews,
-  NHS: fetchNhsNews,
+  WHO:       fetchWhoNews,
+  CDC:       fetchCdcNews,
+  NHS:       fetchNhsNews,
+  ECDC:      fetchEcdcNews,
+  PAHO:      fetchPahoNews,
+  AfricaCDC: fetchAfricaCdcNews,
   OpenFDA: async () => {
     const alerts = await fetchFdaAlerts('recall', 20);
     return alerts.map(a => ({ ...a, source: 'OpenFDA' as const }));
