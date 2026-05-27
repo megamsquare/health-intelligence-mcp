@@ -16,6 +16,7 @@ import { emergencyTriageArgs, buildEmergencyTriagePrompt } from './prompts/emerg
 import { preAppointmentPrepArgs, buildPreAppointmentPrepPrompt } from './prompts/pre-appointment-prep.js';
 import { conditionExplainerArgs, buildConditionExplainerPrompt } from './prompts/condition-explainer.js';
 import { authMiddleware } from './middleware/auth.js';
+import { db } from './db/client.js';
 import { revokeRouter } from './routes/revoke.js';
 import { keysRouter } from './routes/keys.js';
 import { orgsRouter } from './routes/orgs.js';
@@ -418,6 +419,16 @@ server.registerPrompt(
 
 const app = express();
 app.use(express.json());
+
+// HTTP request logger — logs every request with method, path, status, and latency.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log(`[http] ${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
+  });
+  next();
+});
+
 app.use(revokeRouter);
 app.use(keysRouter);
 app.use(orgsRouter);
@@ -449,6 +460,23 @@ app.post('/mcp', authMiddleware, async (req, res) => {
   if (origin && !ALLOWED_ORIGINS.has(origin)) {
     res.status(403).json({ error: 'Origin not allowed' });
     return;
+  }
+
+  if (req.user) {
+    const method = req.body?.method as string | undefined;
+    const params = req.body?.params as Record<string, unknown> | undefined;
+    let logLabel: string | undefined;
+
+    if (method === 'tools/call')     logLabel = `tool:${params?.name}`;
+    else if (method === 'resources/read')  logLabel = `resource:${params?.uri}`;
+    else if (method === 'prompts/get')     logLabel = `prompt:${params?.name}`;
+    else if (method === 'initialize')      logLabel = 'initialize';
+
+    if (logLabel) {
+      console.log(`[mcp] user=${req.user.sub} tier=${req.user.tier} ${logLabel}`);
+      db.query('INSERT INTO usage_log (user_id, tool_name) VALUES ($1, $2)', [req.user.sub, logLabel])
+        .catch((err: unknown) => console.error('[usage-log] insert failed:', err instanceof Error ? err.message : String(err)));
+    }
   }
 
   const server = createServer();
