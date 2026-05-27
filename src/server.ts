@@ -245,7 +245,7 @@ server.registerTool(
     description:
       "Generate a structured PDF medical report from a completed symptom check session. " +
       "The report summarises the patient's symptoms, possible conditions, recommended actions, and a medical disclaimer — suitable to hand to a doctor. " +
-      'Returns the PDF as a base64-encoded blob. Requires a completed session (done:true returned by answer_symptom_question).',
+      'Returns a direct download URL the user can click to save the PDF. Requires a completed session (done:true returned by answer_symptom_question).',
     inputSchema: {
       session_id: z
         .string()
@@ -260,20 +260,18 @@ server.registerTool(
   },
   async ({ session_id }) => {
     try {
-      const pdfBase64 = await generateReport(session_id);
+      // Verify the session exists and is complete before issuing the URL.
+      await generateReport(session_id);
+      const base = process.env.MCP_SERVER_URL ?? 'https://health-intelligence-mcp.onrender.com';
+      const downloadUrl = `${base}/reports/${session_id}.pdf`;
       return {
         content: [
           {
             type: 'text',
-            text: `Medical report generated for session ${session_id}. The PDF is attached below.`,
-          },
-          {
-            type: 'resource',
-            resource: {
-              uri: `health-report://${session_id}.pdf`,
-              mimeType: 'application/pdf',
-              blob: pdfBase64,
-            },
+            text:
+              `Your medical report is ready. Click the link below to download the PDF:\n\n` +
+              `${downloadUrl}\n\n` +
+              `Save or print this document and bring it to your doctor appointment.`,
           },
         ],
       };
@@ -495,6 +493,23 @@ app.get('/.well-known/oauth-protected-resource', (_req, res) => {
     resource: base,
     bearer_methods_supported: ['header'],
   });
+});
+
+// PDF download endpoint — generates and streams the report for a completed session.
+// Session IDs are 128-bit UUIDs, making them effectively unguessable without auth.
+app.get('/reports/:session_id.pdf', async (req, res) => {
+  try {
+    const pdfBase64 = await generateReport(req.params.session_id);
+    const pdfBytes = Buffer.from(pdfBase64, 'base64');
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="health-report-${req.params.session_id.slice(0, 8)}.pdf"`,
+      'Content-Length': String(pdfBytes.length),
+    });
+    res.send(pdfBytes);
+  } catch (err) {
+    res.status(404).json({ error: err instanceof Error ? err.message : 'Report not found' });
+  }
 });
 
 app.get('/health', (_req, res) => {
