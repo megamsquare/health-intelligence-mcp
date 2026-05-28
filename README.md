@@ -1,6 +1,6 @@
 # Health Intelligence MCP
 
-A remote [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible AI assistant structured access to verified health intelligence — ingesting news from WHO, CDC, NHS, and OpenFDA; running a guided multi-step symptom checker backed by PostgreSQL; locating nearby specialists via Google Maps; and generating structured PDF medical reports.
+A remote [Model Context Protocol](https://modelcontextprotocol.io) server that gives any MCP-compatible AI assistant structured access to verified health intelligence — ingesting news from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, and Africa CDC; running a guided multi-step symptom checker backed by PostgreSQL; locating nearby specialists via Google Maps; and generating structured PDF medical reports.
 
 **Live endpoint:** `https://health-intelligence-mcp.onrender.com/mcp`
 
@@ -15,6 +15,7 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 - [Local Setup — Manual](#local-setup--manual)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
+- [Authentication](#authentication)
 - [MCP Tools](#mcp-tools)
 - [MCP Resources](#mcp-resources)
 - [MCP Prompts](#mcp-prompts)
@@ -31,7 +32,8 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 
 ## Features
 
-- **Health news ingestion** — fetch and deduplicate articles from WHO, CDC, NHS, and OpenFDA into PostgreSQL with a full-text search index
+- **Health news ingestion** — fetch and deduplicate articles from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, and Africa CDC into PostgreSQL with a full-text search index
+- **Document ingestion** — upload any medical PDF, DOCX, TXT, Markdown, CSV, or JSON file; SHA-256 deduplicated and indexed for FTS and symptom assessment enrichment
 - **Research search** — PostgreSQL FTS ranked by relevance, with optional live PubMed search
 - **Multi-step symptom checker** — 6-step clinical history flow (primary symptom → duration → severity → associated symptoms → medical history → emergency flags) with persistent session state in PostgreSQL
 - **Urgency assessment** — rule-based engine returning `EMERGENCY / URGENT / SOON / ROUTINE` with likely conditions and recommended action
@@ -54,10 +56,69 @@ A remote [Model Context Protocol](https://modelcontextprotocol.io) server that g
 | Schema validation | Zod |
 | Database | PostgreSQL 16 (Neon serverless in production) |
 | PDF generation | `pdf-lib` (pure Node — no headless browser) |
-| Health data | WHO RSS, CDC RSS, NHS RSS, OpenFDA API, PubMed E-utilities |
+| Health data | WHO RSS, CDC RSS, NHS RSS, OpenFDA API, ECDC RSS, PAHO RSS, Africa CDC RSS, PubMed E-utilities |
 | Mapping | Google Maps Geocoding API + Places API |
 | Hosting | Render (web service) |
 | CI/CD | GitHub → Render auto-deploy on push to `main` |
+
+---
+
+## System Architecture
+
+```mermaid
+graph TD
+    subgraph "AI Clients"
+        CD["Claude Desktop\n(via mcp-remote)"]
+        CC["Claude Code CLI"]
+        CU["Cursor / Windsurf / Cline"]
+    end
+
+    subgraph "Health Intelligence Platform"
+        FE["Next.js Frontend\n(Vercel — mmolayemi.com)"]
+        BE["NestJS Backend\n(Cloud Run)"]
+        FS[("Firestore\nusers · orgs · tokens")]
+        MCP["MCP Server\n(Render — this service)"]
+        PG[("Neon PostgreSQL\narticles · sessions · api_keys")]
+    end
+
+    subgraph "External Data Sources"
+        WHO["WHO RSS"]
+        CDC["CDC RSS"]
+        NHS["NHS RSS"]
+        ECDC["ECDC RSS"]
+        PAHO["PAHO RSS"]
+        ACDC["Africa CDC RSS"]
+        OFDA["OpenFDA API"]
+        PM["PubMed E-utilities"]
+        MAPS["Google Maps API"]
+    end
+
+    FE -->|"Bearer JWT (signup/login)"| BE
+    BE --> FS
+    BE -->|"issue/revoke token\nx-server-secret"| MCP
+
+    CD -->|"Bearer MCP JWT\nvia mcp-remote"| MCP
+    CC -->|"Bearer MCP JWT"| MCP
+    CU -->|"Bearer MCP JWT"| MCP
+
+    MCP -->|"store articles\nsymptom sessions"| PG
+    MCP --> WHO
+    MCP --> CDC
+    MCP --> NHS
+    MCP --> ECDC
+    MCP --> PAHO
+    MCP --> ACDC
+    MCP --> OFDA
+    MCP --> PM
+    MCP --> MAPS
+```
+
+### Request authentication flow
+
+1. User registers at mmolayemi.com — the NestJS backend issues an HS256 MCP JWT
+2. User pastes the JWT into their AI client
+3. On every tool call, the MCP server validates the JWT signature (`SHARED_SECRET`), checks the `jti` against the revocation list, and enforces `calls_per_day` / `sessions_per_day` from the token claims
+4. No database call is made per auth check — all quota data is in the token
 
 ---
 
@@ -208,9 +269,13 @@ npm start
 | Variable | Required | Description |
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | PostgreSQL connection string. For Neon: `postgresql://user:pass@host.neon.tech/db?sslmode=require` |
+| `SHARED_SECRET` | Yes | 256-bit hex secret used to sign and verify HS256 MCP JWTs. Must match `SHARED_SECRET` in the NestJS backend |
+| `SERVER_SECRET` | Yes | Sent in the `x-server-secret` header to authorise the token revocation endpoint. Must match `SERVER_SECRET` in the NestJS backend |
+| `OWNER_TOKEN` | Yes | Long-lived owner JWT (tier=owner, 3650 days) for server-to-server ingestion calls. Generate via the admin settings page |
 | `PUBMED_API_KEY` | Recommended | NCBI API key. Without it, PubMed requests are rate-limited to 3/s. Get one free at [ncbi.nlm.nih.gov/account](https://www.ncbi.nlm.nih.gov/account/) |
 | `GOOGLE_MAPS_API_KEY` | Yes | Required for `find_specialists`. The key must have **Geocoding API** and **Places API** enabled in GCP Console |
 | `OPENFDA_API_KEY` | Optional | Raises OpenFDA rate limit from 240 to 1 000 req/min. Get one at [open.fda.gov/apis/authentication](https://open.fda.gov/apis/authentication/) |
+| `USE_REDIS` | No | Set to `true` to enable Redis-backed rate limiting. Defaults to `false` (in-memory) |
 | `PORT` | No | HTTP port. Defaults to `3000`. Render injects this automatically |
 | `NODE_ENV` | No | Set to `production` by `render.yaml`. Has no functional effect currently but recommended for Express best-practices |
 
@@ -223,10 +288,10 @@ Run once against your PostgreSQL database before first use (`src/db/schema.sql`)
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Stores ingested articles from WHO, CDC, NHS, OpenFDA, and PubMed
+-- Stores ingested articles from WHO, CDC, NHS, OpenFDA, ECDC, PAHO, AfricaCDC, PubMed, and uploaded documents
 CREATE TABLE IF NOT EXISTS health_articles (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  source        TEXT        NOT NULL CHECK (source IN ('WHO','CDC','NHS','OpenFDA','PubMed')),
+  source        TEXT        NOT NULL CHECK (source IN ('WHO','CDC','NHS','OpenFDA','ECDC','PAHO','AfricaCDC','PubMed','Upload')),
   external_id   TEXT        NOT NULL,
   title         TEXT        NOT NULL,
   summary       TEXT,
@@ -273,7 +338,7 @@ CREATE INDEX IF NOT EXISTS symptom_sessions_active
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | UUID | Primary key, auto-generated |
-| `source` | TEXT | One of `WHO`, `CDC`, `NHS`, `OpenFDA`, `PubMed` |
+| `source` | TEXT | One of `WHO`, `CDC`, `NHS`, `OpenFDA`, `ECDC`, `PAHO`, `AfricaCDC`, `PubMed`, `Upload` |
 | `external_id` | TEXT | Source-native ID (GUID, recall number, PubMed ID). Deduplicated with `UNIQUE(source, external_id)` |
 | `title` | TEXT | Article headline, HTML stripped |
 | `summary` | TEXT | First 500 chars of body or abstract |
@@ -296,6 +361,48 @@ CREATE INDEX IF NOT EXISTS symptom_sessions_active
 
 ---
 
+## Authentication
+
+The MCP server requires a valid JWT in the `Authorization` header for all tool calls. Tokens are issued by the Health Intelligence backend and are **not** self-generated.
+
+### Getting a token
+
+1. Register at [mmolayemi.com/register](https://mmolayemi.com/register) — free, no credit card required
+2. Your MCP token is displayed immediately after signup
+3. Copy the token and paste it into your AI client as shown in [Connecting to Claude](#connecting-to-claude)
+
+You can also retrieve or re-issue your token any time from the dashboard at [mmolayemi.com/dashboard](https://mmolayemi.com/dashboard).
+
+### Token claims
+
+Tokens are HS256 JWTs signed with the `SHARED_SECRET` shared between the backend and this MCP server. The server validates the signature and reads quota limits directly from the token claims — no database call is made per request:
+
+```json
+{
+  "sub": "userId",
+  "email": "user@example.com",
+  "tier": "personal",
+  "org_id": null,
+  "calls_per_day": 200,
+  "sessions_per_day": 50,
+  "jti": "unique-token-id",
+  "iat": 1748390400,
+  "exp": 1750982400
+}
+```
+
+### Available tiers
+
+| Tier | Calls/day | Sessions/day | Duration |
+| --- | --- | --- | --- |
+| `free` | 10 | 2 | Permanent |
+| `org_owner` (free org) | 100 | 20 | Permanent |
+| `personal` | 200 | 50 | 30 days |
+| `org_owner` (paid org) | 500 | 100 | 365 days |
+| `org_member` | 500 | 100 | 365 days |
+
+---
+
 ## MCP Tools
 
 All tools are registered on a fresh `McpServer` instance per request (stateless transport). Tool calls return MCP-structured `content` arrays; errors set `isError: true` with a human-readable message Claude can relay.
@@ -312,7 +419,7 @@ Annotations: `readOnlyHint: false` · `destructiveHint: false` · `openWorldHint
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `sources` | `string[]` | `["WHO","CDC","NHS","OpenFDA"]` | Which sources to fetch. Valid values: `WHO`, `CDC`, `NHS`, `OpenFDA` |
+| `sources` | `string[]` | `["WHO","CDC","NHS","OpenFDA","ECDC","PAHO","AfricaCDC"]` | Which sources to fetch. Valid values: `WHO`, `CDC`, `NHS`, `OpenFDA`, `ECDC`, `PAHO`, `AfricaCDC` |
 
 #### Example response
 
@@ -322,6 +429,36 @@ Annotations: `readOnlyHint: false` · `destructiveHint: false` · `openWorldHint
   "skipped_duplicates": 17
 }
 ```
+
+---
+
+### `ingest_document`
+
+Upload a medical document to make its contents searchable and available for symptom assessment enrichment. Accepts the file as a base64-encoded string. Duplicate uploads of the same file are silently ignored (SHA-256 dedup).
+
+Annotations: `readOnlyHint: false` · `destructiveHint: false`
+
+#### Input
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `content_base64` | `string` | Yes | Base64-encoded file content. Maximum file size: 20 MB |
+| `filename` | `string` | Yes | Original filename with extension, e.g. `"malaria-treatment-guidelines-2024.pdf"` |
+| `mime_type` | `string` | No | MIME type, e.g. `"application/pdf"`. Inferred from filename if omitted |
+
+**Supported formats:** PDF, DOCX, TXT, MD, CSV, JSON
+
+#### Example response
+
+```json
+{
+  "status": "ingested",
+  "sha256": "a1b2c3...",
+  "chunks": 12
+}
+```
+
+> If the file was already uploaded (same SHA-256), the response is `{ "status": "duplicate" }`.
 
 ---
 
@@ -783,17 +920,38 @@ claude mcp remove health-intelligence
 
 ### Claude Desktop
 
-1. Open Claude Desktop
-2. Go to **Settings → Connectors**
-3. Click **Add custom connector**
-4. Enter the URL: `https://health-intelligence-mcp.onrender.com/mcp`
-5. Click **Save**
+The server requires an `Authorization` header that the Claude Desktop Connectors UI cannot inject. Use the `mcp-remote` bridge instead:
 
-> Do not add remote servers via `claude_desktop_config.json` — that file is for local stdio servers only. Remote HTTP servers must be added through the Connectors UI.
+1. Install `mcp-remote` (one-time):
+   ```bash
+   npm install -g mcp-remote
+   ```
+
+2. Add to your `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
+   ```json
+   {
+     "mcpServers": {
+       "health-intelligence": {
+         "command": "mcp-remote",
+         "args": [
+           "https://health-intelligence-mcp.onrender.com/mcp",
+           "--header",
+           "Authorization: Bearer YOUR_MCP_TOKEN"
+         ]
+       }
+     }
+   }
+   ```
+
+3. Replace `YOUR_MCP_TOKEN` with your token from [mmolayemi.com/dashboard](https://mmolayemi.com/dashboard).
+
+4. Restart Claude Desktop.
+
+> `mcp-remote` acts as a local stdio-to-HTTP bridge, allowing Claude Desktop to connect to authenticated remote servers.
 
 ### Verify the connection
 
-Ask Claude: *"List the tools, resources, and prompts available from the health-intelligence server."* Claude should respond with all six tools, four resources, and four prompts.
+Ask Claude: *"List the tools, resources, and prompts available from the health-intelligence server."* Claude should respond with all seven tools, four resources, and four prompts.
 
 ---
 
@@ -896,7 +1054,7 @@ Open `http://localhost:6274` in your browser. The Inspector will prompt you to c
 
 3. Click **Connect**
 
-The left panel will show **Tools (6)**, **Resources (4)**, and **Prompts (4)** once the handshake completes.
+The left panel will show **Tools (7)**, **Resources (4)**, and **Prompts (4)** once the handshake completes.
 
 > If the server is cold-starting on Render's free tier, the connection may take 30–60 seconds on the first attempt. Wait for "Connected" before proceeding.
 
@@ -918,7 +1076,7 @@ In the UI, use URL `http://localhost:3000/mcp` with transport **Streamable HTTP*
 
 ### Using the tools
 
-Click the **Tools** tab in the left panel to see all six tools. Click any tool name to expand its input form. Fill in the fields and click **Run Tool** to execute.
+Click the **Tools** tab in the left panel to see all seven tools. Click any tool name to expand its input form. Fill in the fields and click **Run Tool** to execute.
 
 #### `ingest_health_news`
 
@@ -926,7 +1084,7 @@ Fetches and stores articles from health authority feeds. Safe to call repeatedly
 
 | Field | Value to enter |
 | --- | --- |
-| `sources` | `["WHO", "CDC", "NHS", "OpenFDA"]` |
+| `sources` | `["WHO", "CDC", "NHS", "OpenFDA", "ECDC", "PAHO", "AfricaCDC"]` |
 
 Expected response:
 
@@ -1173,6 +1331,9 @@ Under **Environment**, add these variables:
 | Key | Value |
 | --- | --- |
 | `DATABASE_URL` | Your Neon connection string |
+| `SHARED_SECRET` | 256-bit hex secret (must match the NestJS backend) |
+| `SERVER_SECRET` | Server-to-server secret (must match the NestJS backend) |
+| `OWNER_TOKEN` | Long-lived owner JWT from the admin settings page |
 | `PUBMED_API_KEY` | Your NCBI API key |
 | `GOOGLE_MAPS_API_KEY` | Your Google Maps API key |
 | `OPENFDA_API_KEY` | Your OpenFDA API key (optional) |
@@ -1216,7 +1377,7 @@ node e2e-test.mjs
 
 The script:
 
-1. Ingests news from all four sources
+1. Ingests news from all seven sources
 2. Searches for `"fever"` with PubMed fallback
 3. Runs a complete 6-step symptom check (fever · 1-3 days · severity 7 · fatigue · no history · no emergency flags)
 4. Searches for infectious disease specialists in Lagos, Nigeria
@@ -1230,7 +1391,7 @@ Expected output: 11 `✅ PASS` lines and a completion message.
 # Health check
 curl http://localhost:3000/health
 
-# tools/list — confirm all six tools are registered
+# tools/list — confirm all seven tools are registered
 curl -s -X POST http://localhost:3000/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
@@ -1282,6 +1443,27 @@ npm run build    # tsc — zero errors expected
 - **Auth:** API key optional; raises rate limit from 240 to 1 000 req/min
 - **Docs:** [open.fda.gov/apis](https://open.fda.gov/apis/)
 - **Content:** Drug enforcement actions, recalls, safety alerts
+
+### ECDC (European Centre for Disease Prevention and Control)
+
+- **Feed:** `https://www.ecdc.europa.eu/en/rss.xml`
+- **Auth:** None (public RSS)
+- **Rate limit:** No documented limit; capped at 20 items per ingestion
+- **Content:** European disease surveillance, outbreak reports, public health threats
+
+### PAHO (Pan American Health Organization)
+
+- **Feed:** `https://www.paho.org/en/rss.xml`
+- **Auth:** None (public RSS)
+- **Rate limit:** No documented limit; capped at 20 items per ingestion
+- **Content:** Health alerts and disease intelligence for the Americas
+
+### Africa CDC (Africa Centres for Disease Control and Prevention)
+
+- **Feed:** `https://africacdc.org/feed/`
+- **Auth:** None (public RSS)
+- **Rate limit:** No documented limit; capped at 20 items per ingestion
+- **Content:** African region disease surveillance, outbreak alerts, public health guidance
 
 ### PubMed (NCBI E-utilities)
 
