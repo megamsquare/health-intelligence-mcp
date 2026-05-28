@@ -9,6 +9,7 @@ export interface Cache {
   set<V>(key: string, value: V, ttlSeconds: number): void;
   increment(key: string, ttlSeconds: number): number;
   delete(key: string): void;
+  clear(): void;
 }
 
 export class AppCache implements Cache {
@@ -29,6 +30,10 @@ export class AppCache implements Cache {
 
   delete(key: string): void {
     this.store.delete(key);
+  }
+
+  clear(): void {
+    this.store.clear();
   }
 }
 

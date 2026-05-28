@@ -32,4 +32,8 @@ export class TtlCache<K, V> {
     this.map.set(key, { value: next as unknown as V, expiresAt: Date.now() + ttlMs });
     return next;
   }
+
+  clear(): void {
+    this.map.clear();
+  }
 }

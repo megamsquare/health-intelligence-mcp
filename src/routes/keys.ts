@@ -63,3 +63,54 @@ keysRouter.delete('/mcp/keys/:id', authMiddleware, async (req: Request, res: Res
   }
   res.json({ message: 'key revoked' });
 });
+
+// ── POST /mcp/keys/:id/regenerate ────────────────────────────────────────────
+// Revokes the existing key and issues a fresh one with the same name + org scope.
+
+keysRouter.post('/mcp/keys/:id/regenerate', authMiddleware, async (req: Request, res: Response) => {
+  const userId = req.user!.sub;
+
+  const { rows: existing } = await db.query<{ name: string; org_id: string | null }>(
+    `SELECT name, org_id FROM api_keys
+     WHERE id = $1 AND user_id = $2 AND revoked = false`,
+    [req.params.id, userId],
+  );
+  if (!existing.length) {
+    res.status(404).json({ error: 'Key not found' });
+    return;
+  }
+
+  const { name, org_id } = existing[0];
+  const rawKey = randomBytes(32).toString('hex');
+  const keyHash = createHash('sha256').update(rawKey).digest('hex');
+  const keyPrefix = rawKey.slice(0, 8);
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE api_keys SET revoked = true WHERE id = $1`,
+      [req.params.id],
+    );
+    const { rows } = await client.query<{ id: string; created_at: string }>(
+      `INSERT INTO api_keys (user_id, org_id, key_hash, key_prefix, name)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, created_at`,
+      [userId, org_id, keyHash, keyPrefix, name],
+    );
+    await client.query('COMMIT');
+    res.json({
+      id: rows[0].id,
+      key: rawKey,
+      key_prefix: keyPrefix,
+      name,
+      created_at: rows[0].created_at,
+      message: 'Previous key revoked. Store this new key — it will not be shown again.',
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+});

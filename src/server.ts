@@ -23,6 +23,7 @@ import { revokeRouter } from './routes/revoke.js';
 import { keysRouter } from './routes/keys.js';
 import { orgsRouter } from './routes/orgs.js';
 import { usageRouter } from './routes/usage.js';
+import { adminRouter } from './routes/admin.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -493,6 +494,7 @@ app.use(revokeRouter);
 app.use(keysRouter);
 app.use(orgsRouter);
 app.use(usageRouter);
+app.use(adminRouter);
 
 // Origin allowlist — DNS-rebinding prevention (MCP spec MUST requirement).
 //

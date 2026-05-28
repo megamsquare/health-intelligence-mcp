@@ -46,6 +46,22 @@ CREATE INDEX IF NOT EXISTS symptom_sessions_active
   ON symptom_sessions (id)
   WHERE completed_at IS NULL;
 
+-- ─── Plan tiers ──────────────────────────────────────────────────────────────
+-- Admin-configurable limits per plan name.
+-- max_duration_days NULL = permanent (free tier never expires).
+
+CREATE TABLE IF NOT EXISTS plan_tiers (
+  name             TEXT  PRIMARY KEY,
+  calls_per_day    INT   NOT NULL,
+  sessions_per_day INT   NOT NULL,
+  max_duration_days INT              -- NULL = unlimited / permanent
+);
+
+-- Default free tier — very limited, permanent.
+INSERT INTO plan_tiers (name, calls_per_day, sessions_per_day, max_duration_days)
+VALUES ('free', 10, 2, NULL)
+ON CONFLICT (name) DO NOTHING;
+
 -- ─── API keys, organisations, subscriptions, usage ───────────────────────────
 
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -110,6 +126,18 @@ CREATE TABLE IF NOT EXISTS usage_log (
 CREATE INDEX IF NOT EXISTS usage_log_user_time ON usage_log (user_id, called_at DESC);
 -- Supports per-tool analytics aggregations.
 CREATE INDEX IF NOT EXISTS usage_log_tool_time ON usage_log (tool_name, called_at DESC);
+
+-- ─── Migration: add plan_tiers + free org subscriptions ──────────────────────
+-- Run once on existing databases:
+--
+--   CREATE TABLE IF NOT EXISTS plan_tiers (
+--     name TEXT PRIMARY KEY,
+--     calls_per_day INT NOT NULL,
+--     sessions_per_day INT NOT NULL,
+--     max_duration_days INT
+--   );
+--   INSERT INTO plan_tiers (name, calls_per_day, sessions_per_day, max_duration_days)
+--   VALUES ('free', 10, 2, NULL) ON CONFLICT DO NOTHING;
 
 -- ─── Migration: add Upload source ─────────────────────────────────────────────
 -- Run once on existing databases to allow doctor document uploads:
