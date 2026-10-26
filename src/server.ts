@@ -10,6 +10,7 @@ import { registerTools, type RegisterToolsContext } from './register/tools.js';
 import { registerResources } from './register/resources.js';
 import { registerPrompts } from './register/prompts.js';
 import { registerAppRoutes } from './routes/app-routes.js';
+import { runMigrations } from './db/run-migrations.js';
 
 export function createServer(ctx: RegisterToolsContext): McpServer {
   const server = new McpServer(
@@ -52,6 +53,13 @@ app.use(usageRouter);
 app.use(adminRouter);
 
 registerAppRoutes(app, createServer);
+
+try {
+  await runMigrations();
+} catch (err) {
+  console.error('[migrate] startup migration failed:', err instanceof Error ? err.message : err);
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT ?? 3000);
 app.listen(PORT, () => {

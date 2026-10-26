@@ -150,11 +150,10 @@ CREATE INDEX IF NOT EXISTS usage_log_tool_time ON usage_log (tool_name, called_a
 --   VALUES ('free', 10, 2, NULL) ON CONFLICT DO NOTHING;
 
 -- ─── Migration: add symptom_sessions.user_id (owner scoping) ────────────────
--- Run once on existing databases, as part of fix/disable-public-symptom-tools:
---
---   ALTER TABLE symptom_sessions ADD COLUMN IF NOT EXISTS user_id TEXT;
---   CREATE INDEX IF NOT EXISTS symptom_sessions_user_id
---     ON symptom_sessions (user_id) WHERE user_id IS NOT NULL;
+-- Already included directly in the CREATE TABLE above for fresh databases.
+-- Existing databases get this applied automatically on deploy — see
+-- migrations/0001_symptom_sessions_user_id.sql and README.md § Database
+-- Migrations; no manual psql step needed.
 --
 -- Pre-existing rows get user_id = NULL (no verifiable owner). The report
 -- endpoint and session/condition-detail resources treat NULL as "nobody
