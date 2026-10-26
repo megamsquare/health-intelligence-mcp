@@ -12,6 +12,7 @@ declare global {
 
 export interface AuthPayload {
   sub: string;
+  email?: string;
   jti?: string;
   org_id?: string;
   tier?: string;
@@ -83,4 +84,29 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   req.user = { ...payload, tier, calls_per_day: callsPerDay, sessions_per_day: sessionsPerDay };
   next();
+}
+
+// Verifies signature + revocation only — no quota check, no response writing.
+// Used by routes (e.g. the PDF report download) that must fold "no token",
+// "invalid token", and "revoked token" into the same outward response as
+// other refusals (so the caller can't distinguish "not authenticated" from
+// "not authorized" from "not found"). Callers decide what to do with a null.
+export function verifyBearerToken(req: Request): AuthPayload | null {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return null;
+
+  const token = header.slice(7);
+  let payload: AuthPayload;
+  try {
+    payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as unknown as AuthPayload;
+  } catch {
+    return null;
+  }
+
+  if (payload.jti) {
+    const revoked = cache.get<boolean>(`mcp:revoked:${payload.jti}`);
+    if (revoked) return null;
+  }
+
+  return payload;
 }

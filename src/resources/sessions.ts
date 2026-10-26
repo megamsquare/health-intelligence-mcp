@@ -15,9 +15,16 @@ export interface SessionDetail {
   assessment: unknown | null;
 }
 
-export async function getSession(sessionId: string): Promise<SessionDetail | null> {
+// Internal shape used only for the ownership check in register/resources.ts —
+// user_id is deliberately left out of SessionDetail, which is the public
+// response shape and stays unchanged.
+export interface OwnedSessionDetail extends SessionDetail {
+  user_id: string | null;
+}
+
+export async function getSession(sessionId: string): Promise<OwnedSessionDetail | null> {
   const result = await db.query(
-    `SELECT id, created_at, completed_at, answers, assessment
+    `SELECT id, created_at, completed_at, answers, assessment, user_id
      FROM symptom_sessions
      WHERE id = $1`,
     [sessionId]
@@ -40,5 +47,6 @@ export async function getSession(sessionId: string): Promise<SessionDetail | nul
     completed_at: row.completed_at ?? null,
     turns,
     assessment: row.assessment ?? null,
+    user_id: row.user_id ?? null,
   };
 }

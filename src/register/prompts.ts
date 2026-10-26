@@ -3,8 +3,13 @@ import { symptomCheckerArgs, buildSymptomCheckerPrompt } from '../prompts/sympto
 import { emergencyTriageArgs, buildEmergencyTriagePrompt } from '../prompts/emergency-triage.js';
 import { preAppointmentPrepArgs, buildPreAppointmentPrepPrompt } from '../prompts/pre-appointment-prep.js';
 import { conditionExplainerArgs, buildConditionExplainerPrompt } from '../prompts/condition-explainer.js';
+import type { TeamIdentity } from '../lib/team-allowlist.js';
 
-export function registerPrompts(server: McpServer): void {
+export interface RegisterPromptsContext {
+  user?: TeamIdentity;
+}
+
+export function registerPrompts(server: McpServer, ctx: RegisterPromptsContext): void {
   server.registerPrompt(
     'symptom-checker',
     {
@@ -42,7 +47,7 @@ export function registerPrompts(server: McpServer): void {
         'including ICD-11 codes and clinical citations from WHO, CDC, NHS, ECDC, PAHO, and Africa CDC.',
       argsSchema: preAppointmentPrepArgs,
     },
-    ({ condition, session_id }) => buildPreAppointmentPrepPrompt({ condition, session_id })
+    ({ condition, session_id }) => buildPreAppointmentPrepPrompt({ condition, session_id }, ctx.user)
   );
 
   server.registerPrompt(

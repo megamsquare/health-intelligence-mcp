@@ -2,8 +2,13 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { fetchRecentArticles } from '../resources/articles.js';
 import { listConditions, getConditionDetail } from '../resources/conditions.js';
 import { getSession } from '../resources/sessions.js';
+import { isTeamMember, logGatedRefusal, type TeamIdentity } from '../lib/team-allowlist.js';
 
-export function registerResources(server: McpServer): void {
+export interface RegisterResourcesContext {
+  user?: TeamIdentity;
+}
+
+export function registerResources(server: McpServer, ctx: RegisterResourcesContext): void {
   // health://articles/recent — last 50 ingested articles
   server.registerResource(
     'articles-recent',
@@ -46,6 +51,10 @@ export function registerResources(server: McpServer): void {
   );
 
   // health://conditions/{name} — detail for one condition
+  // Gated: team-allowlist only. This leaks per-session identifiers
+  // (session_id, primary_symptom, urgency) across ALL users for the named
+  // condition — the same class of data as the symptom tools and the PDF
+  // report, just reached a different way. See lib/team-allowlist.ts.
   server.registerResource(
     'conditions-detail',
     new ResourceTemplate('health://conditions/{name}', { list: undefined }),
@@ -57,6 +66,14 @@ export function registerResources(server: McpServer): void {
       mimeType: 'application/json',
     },
     async (uri, { name }) => {
+      if (!isTeamMember(ctx.user)) {
+        logGatedRefusal('conditions-detail', ctx.user, 'not-team-member');
+        return {
+          contents: [
+            { uri: uri.toString(), mimeType: 'application/json', text: JSON.stringify({ error: 'This resource is not available.' }) },
+          ],
+        };
+      }
       const detail = await getConditionDetail(decodeURIComponent(String(name)));
       return {
         contents: [{ uri: uri.toString(), mimeType: 'application/json', text: JSON.stringify(detail, null, 2) }],
@@ -65,6 +82,9 @@ export function registerResources(server: McpServer): void {
   );
 
   // health://session/{session_id} — full symptom session with reconstructed Q&A turns
+  // Gated: team-allowlist AND session ownership (user_id must match the caller).
+  // A session with no recorded owner (pre-migration row) is readable by nobody
+  // via this resource, not by everybody — see the schema.sql migration note.
   server.registerResource(
     'session-detail',
     new ResourceTemplate('health://session/{session_id}', { list: undefined }),
@@ -77,6 +97,17 @@ export function registerResources(server: McpServer): void {
       mimeType: 'application/json',
     },
     async (uri, { session_id }) => {
+      const notAvailable = () => ({
+        contents: [
+          { uri: uri.toString(), mimeType: 'application/json', text: JSON.stringify({ error: 'This resource is not available.' }) },
+        ],
+      });
+
+      if (!isTeamMember(ctx.user)) {
+        logGatedRefusal('session-detail', ctx.user, 'not-team-member');
+        return notAvailable();
+      }
+
       const session = await getSession(String(session_id));
       if (!session) {
         return {
@@ -89,8 +120,15 @@ export function registerResources(server: McpServer): void {
           ],
         };
       }
+
+      if (!session.user_id || session.user_id !== ctx.user?.sub) {
+        logGatedRefusal('session-detail', ctx.user, 'not-owner');
+        return notAvailable();
+      }
+
+      const { user_id: _omit, ...publicSession } = session;
       return {
-        contents: [{ uri: uri.toString(), mimeType: 'application/json', text: JSON.stringify(session, null, 2) }],
+        contents: [{ uri: uri.toString(), mimeType: 'application/json', text: JSON.stringify(publicSession, null, 2) }],
       };
     }
   );

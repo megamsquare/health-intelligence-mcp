@@ -6,8 +6,41 @@ import { searchHealthContent } from '../tools/search-health-content.js';
 import { startSymptomCheck, answerSymptomQuestion } from '../tools/symptom-checker.js';
 import { findNearbySpecialists } from '../services/google-maps.js';
 import { generateReport } from '../tools/generate-report.js';
+import { isTeamMember, logGatedRefusal, type TeamIdentity } from '../lib/team-allowlist.js';
 
-export function registerTools(server: McpServer): void {
+export interface RegisterToolsContext {
+  /** The caller's verified JWT claims for this request, if any. */
+  user?: TeamIdentity;
+  /**
+   * True only for a `tools/list` request from a non-team caller — tells us to
+   * hide the three gated tools from the tool list. The execution-time guard
+   * inside each gated tool's handler is unconditional and runs regardless of
+   * this flag: it is the real control, this is only about what's advertised.
+   */
+  hideGatedToolsFromList: boolean;
+}
+
+/**
+ * Wraps a gated tool's handler so the team-allowlist check runs first, on
+ * every call, independent of what the tool list did or didn't advertise.
+ * Refused calls get a fixed, uninformative message and a logged refusal —
+ * never the tool's real error text, so a disabled tool can't be probed.
+ */
+function gateTool<A, R>(
+  toolName: string,
+  ctx: RegisterToolsContext,
+  handler: (args: A) => Promise<R>
+): (args: A) => Promise<R | { isError: true; content: [{ type: 'text'; text: string }] }> {
+  return async (args: A) => {
+    if (!isTeamMember(ctx.user)) {
+      logGatedRefusal(toolName, ctx.user, 'not-team-member');
+      return { isError: true, content: [{ type: 'text', text: 'This tool is not available.' }] };
+    }
+    return handler(args);
+  };
+}
+
+export function registerTools(server: McpServer, ctx: RegisterToolsContext): void {
   // ── ingest_health_news ──────────────────────────────────────────────────────
 
   server.registerTool(
@@ -143,8 +176,9 @@ export function registerTools(server: McpServer): void {
   );
 
   // ── start_symptom_check ─────────────────────────────────────────────────────
+  // Gated: team-allowlist only. See lib/team-allowlist.ts.
 
-  server.registerTool(
+  const startSymptomCheckTool = server.registerTool(
     'start_symptom_check',
     {
       description:
@@ -167,9 +201,9 @@ export function registerTools(server: McpServer): void {
         destructiveHint: false,
       },
     },
-    async ({ country }) => {
+    gateTool('start_symptom_check', ctx, async ({ country }) => {
       try {
-        const result = await startSymptomCheck(country);
+        const result = await startSymptomCheck(country, ctx.user!.sub!);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       } catch (err) {
         return {
@@ -177,12 +211,14 @@ export function registerTools(server: McpServer): void {
           content: [{ type: 'text', text: `Failed to start session: ${err instanceof Error ? err.message : String(err)}` }],
         };
       }
-    }
+    })
   );
+  if (ctx.hideGatedToolsFromList) startSymptomCheckTool.disable();
 
   // ── answer_symptom_question ─────────────────────────────────────────────────
+  // Gated: team-allowlist only. See lib/team-allowlist.ts.
 
-  server.registerTool(
+  const answerSymptomQuestionTool = server.registerTool(
     'answer_symptom_question',
     {
       description:
@@ -209,7 +245,7 @@ export function registerTools(server: McpServer): void {
         destructiveHint: false,
       },
     },
-    async ({ session_id, step, answer }) => {
+    gateTool('answer_symptom_question', ctx, async ({ session_id, step, answer }) => {
       try {
         const result = await answerSymptomQuestion(session_id, step, answer);
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -219,8 +255,9 @@ export function registerTools(server: McpServer): void {
           content: [{ type: 'text', text: `${err instanceof Error ? err.message : String(err)}` }],
         };
       }
-    }
+    })
   );
+  if (ctx.hideGatedToolsFromList) answerSymptomQuestionTool.disable();
 
   // ── find_specialists ────────────────────────────────────────────────────────
 
@@ -269,8 +306,9 @@ export function registerTools(server: McpServer): void {
   );
 
   // ── generate_medical_report ─────────────────────────────────────────────────
+  // Gated: team-allowlist only. See lib/team-allowlist.ts.
 
-  server.registerTool(
+  const generateMedicalReportTool = server.registerTool(
     'generate_medical_report',
     {
       description:
@@ -289,7 +327,7 @@ export function registerTools(server: McpServer): void {
         idempotentHint: true,
       },
     },
-    async ({ session_id }) => {
+    gateTool('generate_medical_report', ctx, async ({ session_id }) => {
       try {
         await generateReport(session_id);
         const base = process.env.MCP_SERVER_URL ?? 'https://health-intelligence-mcp.onrender.com';
@@ -311,6 +349,7 @@ export function registerTools(server: McpServer): void {
           content: [{ type: 'text', text: `${err instanceof Error ? err.message : String(err)}` }],
         };
       }
-    }
+    })
   );
+  if (ctx.hideGatedToolsFromList) generateMedicalReportTool.disable();
 }

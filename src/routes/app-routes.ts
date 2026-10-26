@@ -2,10 +2,12 @@ import { type Express } from 'express';
 import multer from 'multer';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, verifyBearerToken } from '../middleware/auth.js';
 import { ingestDocument } from '../tools/ingest-document.js';
 import { generateReport } from '../tools/generate-report.js';
 import { db } from '../db/client.js';
+import { isTeamMember, logGatedRefusal } from '../lib/team-allowlist.js';
+import type { RegisterToolsContext } from '../register/tools.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -26,7 +28,7 @@ const ALLOWED_ORIGINS = new Set([
   'http://localhost:6274', // MCP Inspector
 ]);
 
-export function registerAppRoutes(app: Express, createServer: () => McpServer): void {
+export function registerAppRoutes(app: Express, createServer: (ctx: RegisterToolsContext) => McpServer): void {
   app.post('/mcp', authMiddleware, async (req, res) => {
     const origin = req.headers.origin;
     if (origin && !ALLOWED_ORIGINS.has(origin)) {
@@ -34,8 +36,9 @@ export function registerAppRoutes(app: Express, createServer: () => McpServer): 
       return;
     }
 
+    const method = req.body?.method as string | undefined;
+
     if (req.user) {
-      const method = req.body?.method as string | undefined;
       const params = req.body?.params as Record<string, unknown> | undefined;
       let logLabel: string | undefined;
 
@@ -53,7 +56,13 @@ export function registerAppRoutes(app: Express, createServer: () => McpServer): 
       }
     }
 
-    const server = createServer();
+    // Hiding from tools/list is purely cosmetic (which tools a client offers);
+    // the real control is the unconditional allowlist check inside each gated
+    // tool's own handler (gateTool, in register/tools.ts), which runs on every
+    // tools/call regardless of this flag.
+    const hideGatedToolsFromList = method === 'tools/list' && !isTeamMember(req.user);
+
+    const server = createServer({ user: req.user, hideGatedToolsFromList });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => transport.close());
     await server.connect(transport);
@@ -68,19 +77,45 @@ export function registerAppRoutes(app: Express, createServer: () => McpServer): 
   });
 
   // PDF download — generates and streams the report for a completed session.
-  // Session IDs are 128-bit UUIDs, making them effectively unguessable without auth.
+  //
+  // Requires a valid, non-revoked token for a team-allowlisted user who owns
+  // this session. Every other case — no token, invalid/expired/revoked token,
+  // valid token but not on the team allowlist, valid team token but someone
+  // else's session, or a session that genuinely doesn't exist — returns the
+  // exact same 404 with no distinguishing detail, so a caller can't use the
+  // response to probe which session IDs exist or whose they are.
   app.get('/reports/:session_id.pdf', async (req, res) => {
+    const sessionId = req.params.session_id;
+    const user = verifyBearerToken(req);
+
+    const refuse = (reason: string) => {
+      logGatedRefusal('reports-pdf', user, reason);
+      res.status(404).json({ error: 'Not found' });
+    };
+
+    if (!user) return refuse('no-or-invalid-token');
+    if (!isTeamMember(user)) return refuse('not-team-member');
+
     try {
-      const pdfBase64 = await generateReport(req.params.session_id);
+      const ownerResult = await db.query<{ user_id: string | null }>(
+        `SELECT user_id FROM symptom_sessions WHERE id = $1`,
+        [sessionId]
+      );
+      if (!ownerResult.rows.length) return refuse('session-not-found');
+
+      const ownerId = ownerResult.rows[0].user_id;
+      if (!ownerId || ownerId !== user.sub) return refuse('not-owner');
+
+      const pdfBase64 = await generateReport(sessionId);
       const pdfBytes = Buffer.from(pdfBase64, 'base64');
       res.set({
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="health-report-${req.params.session_id.slice(0, 8)}.pdf"`,
+        'Content-Disposition': `attachment; filename="health-report-${sessionId.slice(0, 8)}.pdf"`,
         'Content-Length': String(pdfBytes.length),
       });
       res.send(pdfBytes);
-    } catch (err) {
-      res.status(404).json({ error: err instanceof Error ? err.message : 'Report not found' });
+    } catch {
+      refuse('generation-failed');
     }
   });
 
