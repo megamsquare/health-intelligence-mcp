@@ -38,13 +38,23 @@ CREATE TABLE IF NOT EXISTS symptom_sessions (
   completed_at TIMESTAMPTZ,
   current_step INTEGER     NOT NULL DEFAULT 0,
   answers      JSONB       NOT NULL DEFAULT '{}',
-  assessment   JSONB
+  assessment   JSONB,
+  -- Owning caller's JWT `sub`. NULL on sessions created before this column
+  -- existed (and on any future caller that somehow bypasses start_symptom_check) —
+  -- such sessions have no verifiable owner, so ownership checks must treat
+  -- NULL as "nobody", never as "everybody" or "the current caller".
+  user_id      TEXT
 );
 
 -- Partial index: only active (incomplete) sessions are queried mid-flow.
 CREATE INDEX IF NOT EXISTS symptom_sessions_active
   ON symptom_sessions (id)
   WHERE completed_at IS NULL;
+
+-- Supports the report/session-detail ownership check (WHERE id = ? AND user_id = ?).
+CREATE INDEX IF NOT EXISTS symptom_sessions_user_id
+  ON symptom_sessions (user_id)
+  WHERE user_id IS NOT NULL;
 
 -- ─── Plan tiers ──────────────────────────────────────────────────────────────
 -- Admin-configurable limits per plan name.
@@ -138,6 +148,17 @@ CREATE INDEX IF NOT EXISTS usage_log_tool_time ON usage_log (tool_name, called_a
 --   );
 --   INSERT INTO plan_tiers (name, calls_per_day, sessions_per_day, max_duration_days)
 --   VALUES ('free', 10, 2, NULL) ON CONFLICT DO NOTHING;
+
+-- ─── Migration: add symptom_sessions.user_id (owner scoping) ────────────────
+-- Already included directly in the CREATE TABLE above for fresh databases.
+-- Existing databases get this applied automatically on deploy — see
+-- migrations/0001_symptom_sessions_user_id.sql and README.md § Database
+-- Migrations; no manual psql step needed.
+--
+-- Pre-existing rows get user_id = NULL (no verifiable owner). The report
+-- endpoint and session/condition-detail resources treat NULL as "nobody
+-- owns this", not as "anyone may access this" — so old sessions simply
+-- become unreachable via those paths rather than wrongly shared.
 
 -- ─── Migration: add Upload source ─────────────────────────────────────────────
 -- Run once on existing databases to allow doctor document uploads:

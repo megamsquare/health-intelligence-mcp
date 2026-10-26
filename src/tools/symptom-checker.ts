@@ -4,11 +4,11 @@ import { generateAssessment, type LikelyCondition } from '../symptom/assessment.
 import { searchHealthContent } from './search-health-content.js';
 import { lookupIcd11 } from '../services/icd11.js';
 
-export async function startSymptomCheck(country?: string) {
+export async function startSymptomCheck(country: string | undefined, userId: string) {
   const initialAnswers = country ? JSON.stringify({ country }) : '{}';
   const result = await db.query(
-    `INSERT INTO symptom_sessions (current_step, answers) VALUES (0, $1) RETURNING id`,
-    [initialAnswers]
+    `INSERT INTO symptom_sessions (current_step, answers, user_id) VALUES (0, $1, $2) RETURNING id`,
+    [initialAnswers, userId]
   );
   const session_id = result.rows[0].id as string;
 

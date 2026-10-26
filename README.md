@@ -195,18 +195,7 @@ docker compose down -v       # also deletes the database volume
 
 ### Schema migrations
 
-The schema is applied automatically on first start. If you change `schema.sql` and need to re-apply it, destroy the volume and restart:
-
-```bash
-docker compose down -v
-docker compose up --build
-```
-
-For incremental migrations against an existing volume, connect to the running database directly:
-
-```bash
-docker compose exec db psql -U healthintel -d healthintel -f /dev/stdin < src/db/schema.sql
-```
+`schema.sql` is applied automatically on first start (fresh volume only). For anything after that — including an existing volume — the app applies pending files from `migrations/` itself on every start; no manual step needed. See [Database Migrations](#database-migrations) below.
 
 ---
 
@@ -275,6 +264,7 @@ npm start
 | `PUBMED_API_KEY` | Recommended | NCBI API key. Without it, PubMed requests are rate-limited to 3/s. Get one free at [ncbi.nlm.nih.gov/account](https://www.ncbi.nlm.nih.gov/account/) |
 | `GOOGLE_MAPS_API_KEY` | Yes | Required for `find_specialists`. The key must have **Geocoding API** and **Places API** enabled in GCP Console |
 | `OPENFDA_API_KEY` | Optional | Raises OpenFDA rate limit from 240 to 1 000 req/min. Get one at [open.fda.gov/apis/authentication](https://open.fda.gov/apis/authentication/) |
+| `TEAM_ALLOWLIST` | No (fails closed) | Comma-separated JWT `sub`/email values allowed to use `start_symptom_check`, `answer_symptom_question`, `generate_medical_report`, the session/condition-detail resources, and `pre-appointment-prep`'s session lookup. Unset or empty refuses everyone, including the team |
 | `USE_REDIS` | No | Set to `true` to enable Redis-backed rate limiting. Defaults to `false` (in-memory) |
 | `PORT` | No | HTTP port. Defaults to `3000`. Render injects this automatically |
 | `NODE_ENV` | No | Set to `production` by `render.yaml`. Has no functional effect currently but recommended for Express best-practices |
@@ -358,6 +348,32 @@ CREATE INDEX IF NOT EXISTS symptom_sessions_active
 | `current_step` | INTEGER | 0–6; used to enforce sequential answering |
 | `answers` | JSONB | Accumulated answers keyed by question name |
 | `assessment` | JSONB | Final assessment object, set on completion |
+| `user_id` | TEXT | Owning caller's JWT `sub`. NULL on sessions from before this column existed — treated as "nobody owns this", never "everybody" |
+
+---
+
+## Database Migrations
+
+> **Rule:** never write a migration that drops data or rewrites existing rows (`DROP TABLE`/`DROP COLUMN`, `TRUNCATE`, `UPDATE`/`DELETE` on existing rows, etc.) without explicit approval first. Every migration here must be additive and safe to re-run.
+
+`src/db/schema.sql` is the full schema for a brand-new database (used by the Docker Compose `initdb` mount and the manual-setup `psql` step). Everything after that initial create goes through `migrations/`:
+
+- `migrations/NNNN_description.sql` — plain, forward-only SQL files, numbered in order.
+- `src/db/run-migrations.ts` applies any file not yet recorded in the `schema_migrations` table, each in its own transaction, under a Postgres advisory lock (so two instances starting at once don't apply the same file twice). It runs automatically at server startup, **before** the HTTP server starts listening.
+- If a migration fails, the server logs the error and exits non-zero without ever calling `app.listen` — on Render this means the previous deploy stays live and the bad deploy is rejected by the health check.
+- Already-applied migrations are skipped (logged, not re-run).
+
+**To add a migration:**
+
+1. Create `migrations/<next-number>_<description>.sql` (e.g. `0002_add_foo.sql`) with idempotent SQL (`CREATE ... IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, etc.) — nothing destructive, per the rule above.
+2. If it's a new or changed column/table that should also exist on a brand-new database, add the same shape to `src/db/schema.sql` directly (so fresh installs and migrated installs end up identical).
+3. Merge it. The next deploy applies it automatically — no manual `psql` step.
+
+**Local/manual use**, outside the server's own startup run:
+
+```bash
+npm run migrate
+```
 
 ---
 

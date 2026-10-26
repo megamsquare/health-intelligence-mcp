@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getSession } from '../resources/sessions.js';
+import { isTeamMember, logGatedRefusal, type TeamIdentity } from '../lib/team-allowlist.js';
 
 export const preAppointmentPrepArgs = {
   condition: z
@@ -12,26 +13,39 @@ export const preAppointmentPrepArgs = {
     .describe('Optional: UUID of a completed symptom-check session. When provided, the patient\'s recorded history is embedded in the prompt.'),
 };
 
-export async function buildPreAppointmentPrepPrompt(args: { condition: string; session_id?: string }) {
+// `requester` gates the session-history lookup only (team-allowlist + session
+// ownership) — the checklist itself needs no auth. A denied or missing/unowned
+// session degrades to the no-history path rather than erroring, since the
+// checklist is still useful without it. See lib/team-allowlist.ts.
+export async function buildPreAppointmentPrepPrompt(args: { condition: string; session_id?: string }, requester?: TeamIdentity) {
   let historyBlock = '';
 
   if (args.session_id) {
-    const session = await getSession(args.session_id);
-    if (session?.completed_at) {
-      const answers = Object.fromEntries(session.turns.map(t => [t.question.split('?')[0].trim(), t.answer]));
-      const assessment = session.assessment as Record<string, unknown> | null;
-      type AssessmentCondition = { condition: string; icd_code?: string; notes?: string; sources?: Array<{ source: string; title: string }> };
-      const conditionLines = Array.isArray(assessment?.likely_conditions)
-        ? (assessment.likely_conditions as AssessmentCondition[]).map(c => {
-            const icd = c.icd_code ? ` (ICD-11: ${c.icd_code})` : '';
-            const src = c.sources && c.sources.length > 0
-              ? ` — cited by ${c.sources.map(s => s.source).join(', ')}`
-              : '';
-            return `  • ${c.condition}${icd}${src}`;
-          }).join('\n')
-        : '  • Not determined';
+    const denied = `\n(Note: Session history is not available — proceeding without patient history.)\n`;
 
-      historyBlock = `
+    if (!isTeamMember(requester)) {
+      logGatedRefusal('pre-appointment-prep', requester, 'not-team-member');
+      historyBlock = denied;
+    } else {
+      const session = await getSession(args.session_id);
+
+      if (session && (!session.user_id || session.user_id !== requester?.sub)) {
+        logGatedRefusal('pre-appointment-prep', requester, 'not-owner');
+        historyBlock = denied;
+      } else if (session?.completed_at) {
+        const assessment = session.assessment as Record<string, unknown> | null;
+        type AssessmentCondition = { condition: string; icd_code?: string; notes?: string; sources?: Array<{ source: string; title: string }> };
+        const conditionLines = Array.isArray(assessment?.likely_conditions)
+          ? (assessment.likely_conditions as AssessmentCondition[]).map(c => {
+              const icd = c.icd_code ? ` (ICD-11: ${c.icd_code})` : '';
+              const src = c.sources && c.sources.length > 0
+                ? ` — cited by ${c.sources.map(s => s.source).join(', ')}`
+                : '';
+              return `  • ${c.condition}${icd}${src}`;
+            }).join('\n')
+          : '  • Not determined';
+
+        historyBlock = `
 **Patient symptom history (session ${args.session_id})**
 ${session.turns.map(t => `- ${t.question}: ${JSON.stringify(t.answer)}`).join('\n')}
 Assessment urgency: ${assessment?.urgency ?? 'N/A'}
@@ -42,10 +56,11 @@ Where ICD-11 codes are shown, include them in the "Records to bring" section so 
 
 Use this history to make the questions and checklists below more specific to what the patient has already reported.
 `;
-    } else if (session) {
-      historyBlock = `\n(Note: Session ${args.session_id} exists but is not yet completed — history not included.)\n`;
-    } else {
-      historyBlock = `\n(Note: Session ${args.session_id} was not found — proceeding without patient history.)\n`;
+      } else if (session) {
+        historyBlock = `\n(Note: Session ${args.session_id} exists but is not yet completed — history not included.)\n`;
+      } else {
+        historyBlock = `\n(Note: Session ${args.session_id} was not found — proceeding without patient history.)\n`;
+      }
     }
   }
 

@@ -6,12 +6,13 @@ import { keysRouter } from './routes/keys.js';
 import { orgsRouter } from './routes/orgs.js';
 import { usageRouter } from './routes/usage.js';
 import { adminRouter } from './routes/admin.js';
-import { registerTools } from './register/tools.js';
+import { registerTools, type RegisterToolsContext } from './register/tools.js';
 import { registerResources } from './register/resources.js';
 import { registerPrompts } from './register/prompts.js';
 import { registerAppRoutes } from './routes/app-routes.js';
+import { runMigrations } from './db/run-migrations.js';
 
-function createServer(): McpServer {
+export function createServer(ctx: RegisterToolsContext): McpServer {
   const server = new McpServer(
     { name: 'health-intelligence', version: '0.1.0' },
     {
@@ -20,13 +21,14 @@ function createServer(): McpServer {
         'For symptom checking: ALWAYS ask the patient for their country first, then call start_symptom_check with the country param, then call answer_symptom_question for each step until done:true is returned. ' +
         'The completed assessment includes ICD-11 codes and citations from clinical bodies for each condition. ' +
         'generate_medical_report requires a completed symptom session (done:true) — it returns a download URL for a PDF that includes ICD codes and source citations. ' +
-        'Always remind users that health information here is not a substitute for professional medical advice.',
+        'Always remind users that health information here is not a substitute for professional medical advice. ' +
+        'The symptom-check, answer, and report-generation tools are restricted to an internal team allowlist and are not available to ordinary callers.',
     }
   );
 
-  registerTools(server);
-  registerResources(server);
-  registerPrompts(server);
+  registerTools(server, ctx);
+  registerResources(server, { user: ctx.user });
+  registerPrompts(server, { user: ctx.user });
 
   return server;
 }
@@ -51,6 +53,13 @@ app.use(usageRouter);
 app.use(adminRouter);
 
 registerAppRoutes(app, createServer);
+
+try {
+  await runMigrations();
+} catch (err) {
+  console.error('[migrate] startup migration failed:', err instanceof Error ? err.message : err);
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT ?? 3000);
 app.listen(PORT, () => {
